@@ -5,6 +5,7 @@ import os
 import logging
 from typing import Optional, Dict, List
 from pathlib import Path
+from datetime import datetime
 
 class PDFAPIClient:
     """Client for interacting with the PDF processing API to generate YouTube Shorts"""
@@ -473,3 +474,137 @@ class PDFAPIClient:
             self.logger.warning(f"Failed to clean up ZIP file: {e}")
         
         return video_files
+
+    def publish_scheduled_videos(self):
+        """Check for videos that should be published now and make them public"""
+        current_time = datetime.now()
+        published_count = 0
+        
+        for video in self.upload_queue:
+            if (video.get('status') == 'scheduled' and 
+                video.get('scheduled_publish_time') and 
+                video.get('video_id')):
+                
+                # Parse scheduled time
+                scheduled_time_str = video['scheduled_publish_time']
+                if isinstance(scheduled_time_str, str):
+                    try:
+                        scheduled_time = datetime.fromisoformat(scheduled_time_str.replace('Z', '+00:00'))
+                        # Convert to local time for comparison
+                        if scheduled_time.tzinfo:
+                            import pytz
+                            local_tz = pytz.timezone('Asia/Kolkata')
+                            scheduled_time = scheduled_time.astimezone(local_tz).replace(tzinfo=None)
+                    except ValueError:
+                        self.logger.error(f"Invalid scheduled time format: {scheduled_time_str}")
+                        continue
+                else:
+                    scheduled_time = scheduled_time_str
+                
+                # Check if it's time to publish (with 5 minute buffer)
+                time_diff = (scheduled_time - current_time).total_seconds()
+                
+                if -300 <= time_diff <= 300:  # Within 5 minutes of scheduled time
+                    # For YouTube's scheduled publishing, we don't need to make videos public manually
+                    # YouTube will automatically publish them at the scheduled time
+                    self.logger.info(f"Video '{video['title']}' (ID: {video['video_id']}) is scheduled for {scheduled_time}")
+                    self.logger.info("YouTube will automatically publish this video at the scheduled time")
+                    
+                    # Update status to indicate it's in YouTube's hands
+                    video['status'] = 'scheduled_on_youtube'
+                    video['last_checked'] = current_time.isoformat()
+                    published_count += 1
+                    
+                elif time_diff < -3600:  # More than 1 hour past scheduled time
+                    # Video should have been published by now, check its actual status
+                    self.logger.warning(f"Video '{video['title']}' was scheduled for {scheduled_time} but is overdue")
+                    
+                    # Optional: Check actual video status on YouTube
+                    try:
+                        channel_info = self.youtube_uploader.get_channel_info()
+                        if channel_info:
+                            # Check if video is now public
+                            response = self.youtube_uploader.youtube.videos().list(
+                                part='status',
+                                id=video['video_id']
+                            ).execute()
+                            
+                            if response['items']:
+                                actual_status = response['items'][0]['status']['privacyStatus']
+                                if actual_status == 'public':
+                                    self.logger.info(f"Video '{video['title']}' is now public on YouTube")
+                                    video['status'] = 'published'
+                                    video['published_at'] = current_time.isoformat()
+                                    published_count += 1
+                                else:
+                                    self.logger.warning(f"Video '{video['title']}' status is still: {actual_status}")
+                            else:
+                                self.logger.error(f"Video '{video['title']}' not found on YouTube (may have been deleted)")
+                                video['status'] = 'failed'
+                    except Exception as e:
+                        self.logger.error(f"Error checking video status: {e}")
+        
+        if published_count > 0:
+            self.save_upload_queue()
+            self.logger.info(f"Updated status for {published_count} scheduled videos")
+        
+        return published_count
+
+    def upload_pending_videos(self):
+        """Upload pending videos to YouTube with scheduled publication times"""
+        uploaded_count = 0
+        
+        for video in self.upload_queue:
+            if video.get('status') == 'pending' and video.get('video_path'):
+                try:
+                    self.logger.info(f"Uploading video: {video['title']}")
+                    
+                    # Upload video as private first
+                    video_id = self.youtube_uploader.upload_video(
+                        video_path=video['video_path'],
+                        title=video['title'],
+                        description=video['description'],
+                        tags=video.get('tags', []),
+                        privacy_status='private'
+                    )
+                    
+                    if video_id:
+                        # Schedule the video for publication
+                        scheduled_time = video['scheduled_publish_time']
+                        if isinstance(scheduled_time, str):
+                            scheduled_time = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+                        
+                        success = self.youtube_uploader.schedule_video(video_id, scheduled_time)
+                        
+                        if success:
+                            video['video_id'] = video_id
+                            video['status'] = 'scheduled'
+                            video['uploaded_at'] = datetime.now().isoformat()
+                            
+                            # Move processed file
+                            processed_path = self._move_to_processed(video['video_path'])
+                            if processed_path:
+                                video['processed_path'] = processed_path
+                            
+                            uploaded_count += 1
+                            self.logger.info(f"✅ Successfully scheduled: {video['title']} (ID: {video_id}) for {scheduled_time}")
+                            self.logger.info(f"🎬 Video will be automatically published by YouTube at the scheduled time")
+                        else:
+                            self.logger.error(f"❌ Failed to schedule video: {video['title']} (ID: {video_id})")
+                            video['status'] = 'upload_failed'
+                            video['upload_attempts'] = video.get('upload_attempts', 0) + 1
+                    else:
+                        self.logger.error(f"❌ Failed to upload video: {video['title']}")
+                        video['status'] = 'upload_failed'
+                        video['upload_attempts'] = video.get('upload_attempts', 0) + 1
+                        
+                except Exception as e:
+                    self.logger.error(f"❌ Error uploading video {video['title']}: {e}")
+                    video['status'] = 'upload_failed'
+                    video['upload_attempts'] = video.get('upload_attempts', 0) + 1
+        
+        if uploaded_count > 0:
+            self.save_upload_queue()
+            self.logger.info(f"📊 Uploaded and scheduled {uploaded_count} videos")
+        
+        return uploaded_count

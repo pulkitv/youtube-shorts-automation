@@ -429,7 +429,23 @@ class YouTubeShortsAutomation:
 
     def run_manual_generation_with_custom_time(self):
         """Manually trigger video generation with custom scheduling time"""
-        script = input("Enter script (use — pause — to separate videos): ")
+        print("\nScript Input Options:")
+        print("1. Enter script manually")
+        print("2. Load from market_scripts.py file")
+        
+        input_choice = input("Choose script input method (1-2): ").strip()
+        
+        if input_choice == '2':
+            try:
+                from market_scripts import MARKET_SCRIPT
+                script = MARKET_SCRIPT
+                print(f"✅ Loaded script from file ({len(script)} characters, {script.count('— pause —') + 1} videos)")
+            except ImportError:
+                print("❌ market_scripts.py file not found. Please create it first.")
+                return
+        else:
+            script = input("Enter script (use — pause — to separate videos): ")
+        
         voice = input("Enter voice (nova/alloy/echo/fable/onyx/shimmer) [nova]: ") or "nova"
         speed = float(input("Enter speed (0.25-4.0) [1.0]: ") or "1.0")
         
@@ -467,12 +483,11 @@ class YouTubeShortsAutomation:
                     
                     # Show the schedule preview
                     interval_hours = self.config['scheduling']['interval_hours']
-                    first_video = custom_start_time
-                    second_video = custom_start_time + timedelta(hours=interval_hours)
-                    
-                    print(f"📅 Schedule Preview:")
-                    print(f"   First video:  {first_video.strftime('%Y-%m-%d %H:%M')} ({first_video.strftime('%I:%M %p')} IST)")
-                    print(f"   Second video: {second_video.strftime('%Y-%m-%d %H:%M')} ({second_video.strftime('%I:%M %p')} IST)")
+                    video_count = script.count('— pause —') + 1
+                    print(f"📅 Schedule Preview for {video_count} videos:")
+                    for i in range(video_count):
+                        video_time = custom_start_time + timedelta(hours=interval_hours * i)
+                        print(f"   Video {i+1}: {video_time.strftime('%Y-%m-%d %H:%M')} ({video_time.strftime('%I:%M %p')} IST)")
                     
                     confirm = input("Proceed with this schedule? (y/N): ").strip().lower()
                     if confirm == 'y':
