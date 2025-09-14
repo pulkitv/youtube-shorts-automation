@@ -43,7 +43,8 @@ class YouTubeUploader:
                     description: str,
                     tags: List[str] = None,
                     category_id: str = "22",  # People & Blogs
-                    privacy_status: str = "public") -> Optional[str]:
+                    privacy_status: str = "public",
+                    video_type: str = "short") -> Optional[str]:
         """
         Upload a video to YouTube
         
@@ -54,6 +55,7 @@ class YouTubeUploader:
             tags: List of tags for the video
             category_id: YouTube category ID (22 = People & Blogs)
             privacy_status: public, private, or unlisted
+            video_type: "short" for YouTube Shorts, "post" for regular videos
             
         Returns:
             Video ID if successful, None if failed
@@ -67,12 +69,27 @@ class YouTubeUploader:
             return None
         
         try:
+            # Adjust title and tags based on video type
+            if video_type == "short":
+                # For Shorts, add #Shorts tag if not already present
+                final_tags = tags or []
+                if "Shorts" not in final_tags and "shorts" not in final_tags:
+                    final_tags.append("Shorts")
+                # Add #Shorts to description if not present
+                if "#Shorts" not in description and "#shorts" not in description:
+                    description = f"{description}\n\n#Shorts"
+                self.logger.info(f"Uploading as YouTube Short: {title}")
+            else:
+                # For regular posts, use tags as-is
+                final_tags = tags or []
+                self.logger.info(f"Uploading as YouTube Post: {title}")
+            
             # Prepare video metadata
             body = {
                 'snippet': {
                     'title': title,
                     'description': description,
-                    'tags': tags or [],
+                    'tags': final_tags,
                     'categoryId': category_id
                 },
                 'status': {
@@ -100,7 +117,8 @@ class YouTubeUploader:
             video_id = self._resumable_upload(insert_request)
             
             if video_id:
-                self.logger.info(f"Successfully uploaded video: {title} (ID: {video_id})")
+                video_type_label = "YouTube Short" if video_type == "short" else "YouTube Post"
+                self.logger.info(f"Successfully uploaded {video_type_label}: {title} (ID: {video_id})")
                 return video_id
             else:
                 self.logger.error(f"Failed to upload video: {title}")

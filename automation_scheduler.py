@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 from youtube_uploader import YouTubeUploader
-from pdf_api_client import PDFAPIClient
+from pdf_api_client import PDFAPIClient, RegularVoiceoverAPIClient
 
 class YouTubeShortsAutomation:
     """Main automation class that coordinates API calls, video downloads, and YouTube uploads"""
@@ -33,9 +33,14 @@ class YouTubeShortsAutomation:
             refresh_token=self.config['youtube']['refresh_token']
         )
         
+        # Initialize both API clients
         self.api_client = PDFAPIClient(
             base_url=self.config['api']['base_url'],
             endpoint=self.config['api']['endpoint']
+        )
+        
+        self.voiceover_client = RegularVoiceoverAPIClient(
+            base_url=self.config['api']['base_url']
         )
         
         # Upload queue management
@@ -45,7 +50,7 @@ class YouTubeShortsAutomation:
         # Create directories
         self.create_directories()
         
-        self.logger.info("YouTube Shorts Automation initialized successfully")
+        self.logger.info("YouTube Shorts & Posts Automation initialized successfully")
     
     def setup_logging(self):
         """Configure logging"""
@@ -113,7 +118,7 @@ class YouTubeShortsAutomation:
         except Exception as e:
             self.logger.error(f"Failed to save upload queue: {e}")
     
-    def add_videos_to_queue(self, video_files: List[str], script_info: Dict, custom_start_time: Optional[datetime] = None):
+    def add_videos_to_queue(self, video_files: List[str], script_info: Dict, custom_start_time: Optional[datetime] = None, video_type: str = "short"):
         """Add videos to the upload queue with scheduled publication times"""
         timestamp = datetime.now()
         
@@ -134,29 +139,47 @@ class YouTubeShortsAutomation:
             filename = os.path.basename(video_path)
             title = os.path.splitext(filename)[0]  # Remove .mp4 extension
             
+            # Remove 'api' prefix if present
+            if title.lower().startswith('api_'):
+                title = title[4:]  # Remove 'api_' prefix
+            elif title.lower().startswith('api '):
+                title = title[4:]  # Remove 'api ' prefix
+            
             # Replace underscores with spaces for better readability
             title = title.replace('_', ' ')
             
             # Calculate scheduled publication time
             scheduled_time = last_scheduled_time + timedelta(hours=interval_hours * (i + 1))
             
+            # Adjust description based on video type
+            base_description = f"{self.config['youtube']['default_description']}\n\nGenerated on: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+            if video_type == "post":
+                # For regular posts, add more detailed description
+                description = f"📊 Market Analysis & Business Updates\n\n{base_description}\n\n🎯 Stay updated with the latest market trends and business news."
+            else:
+                # For shorts, keep it concise
+                description = base_description
+            
             video_info = {
                 'video_path': video_path,
-                'title': title,  # Use actual filename as title
-                'description': f"{self.config['youtube']['default_description']}\n\nGenerated on: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
+                'title': title,  # Use cleaned filename as title
+                'description': description,
                 'tags': self.config['youtube']['default_tags'],
                 'added_at': timestamp,
                 'scheduled_publish_time': scheduled_time,
                 'script_info': script_info,
                 'upload_attempts': 0,
-                'status': 'pending'
+                'status': 'pending',
+                'video_type': video_type  # Store video type
             }
             self.upload_queue.append(video_info)
             
-            self.logger.info(f"Scheduled '{title}' for {scheduled_time.strftime('%Y-%m-%d %H:%M')} ({scheduled_time.strftime('%I:%M %p')} IST)")
+            video_type_label = "YouTube Short" if video_type == "short" else "YouTube Post"
+            self.logger.info(f"Scheduled '{title}' as {video_type_label} for {scheduled_time.strftime('%Y-%m-%d %H:%M')} ({scheduled_time.strftime('%I:%M %p')} IST)")
         
         self.save_upload_queue()
-        self.logger.info(f"Added {len(video_files)} videos to upload queue with scheduled publication times")
+        video_type_label = "YouTube Shorts" if video_type == "short" else "YouTube Posts"
+        self.logger.info(f"Added {len(video_files)} videos to upload queue as {video_type_label} with scheduled publication times")
 
     def get_last_scheduled_time(self) -> datetime:
         """Get the last scheduled publication time from the queue, or current time if none"""
@@ -208,6 +231,35 @@ class YouTubeShortsAutomation:
             self.logger.error(f"Failed to generate videos: {e}")
             return []
     
+    def generate_youtube_posts_from_script(self, script: str, voice: str = "nova", speed: float = 1.0) -> List[str]:
+        """Generate YouTube Posts (landscape videos) from a script using the Regular Format Voiceover API"""
+        self.logger.info("Starting YouTube Posts generation from script")
+        
+        try:
+            video_path = self.voiceover_client.generate_and_download_video(
+                script=script,
+                download_folder=self.config['files']['download_folder'],
+                voice=voice,
+                speed=speed
+            )
+            
+            if video_path:
+                # Add video to upload queue with 'post' type
+                script_info = {
+                    'script': script[:200] + '...' if len(script) > 200 else script,
+                    'voice': voice,
+                    'speed': speed,
+                    'generated_at': datetime.now()
+                }
+                self.add_videos_to_queue([video_path], script_info, video_type="post")
+                return [video_path]
+            else:
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"Failed to generate YouTube Posts: {e}")
+            return []
+    
     def upload_pending_videos(self):
         """Upload pending videos and schedule them for publication"""
         current_time = datetime.now()
@@ -218,8 +270,6 @@ class YouTubeShortsAutomation:
         
         if not pending_videos:
             self.logger.info("No pending videos to upload")
-            # Check for videos ready to be published
-            self.check_and_publish_scheduled_videos()
             return
         
         # Upload all pending videos as private (they'll be scheduled for later publication)
@@ -237,15 +287,20 @@ class YouTubeShortsAutomation:
                 if isinstance(scheduled_time, str):
                     scheduled_time = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
                 
-                self.logger.info(f"Uploading video as private: {video_info['title']} (scheduled for {scheduled_time})")
+                # Get video type (default to 'short' for backward compatibility)
+                video_type = video_info.get('video_type', 'short')
+                video_type_label = "YouTube Short" if video_type == "short" else "YouTube Post"
                 
-                # Upload as private initially
+                self.logger.info(f"Uploading {video_type_label} as private: {video_info['title']} (scheduled for {scheduled_time})")
+                
+                # Upload as private initially with video type
                 video_id = self.youtube_uploader.upload_video(
                     video_path=video_path,
                     title=video_info['title'],
                     description=video_info['description'],
                     tags=video_info['tags'],
-                    privacy_status="private"  # Upload as private
+                    privacy_status="private",  # Upload as private
+                    video_type=video_type  # Pass video type to uploader
                 )
                 
                 if video_id:
@@ -254,14 +309,15 @@ class YouTubeShortsAutomation:
                     video_info['uploaded_at'] = datetime.now()
                     
                     # Schedule for publication
-                    if self.youtube_uploader.schedule_video(video_id, scheduled_time):
+                    if scheduled_time and self.youtube_uploader.schedule_video(video_id, scheduled_time):
                         video_info['status'] = 'scheduled'
                         video_info['scheduled_at'] = datetime.now()
                         self.logger.info(f"Successfully scheduled: {video_info['title']} (ID: {video_id}) for {scheduled_time}")
+                        self.logger.info("✅ YouTube will automatically publish this video at the scheduled time")
                     else:
-                        # If scheduling fails, just mark as uploaded and publish immediately
-                        self.logger.warning(f"Failed to schedule video, publishing immediately: {video_info['title']}")
-                        video_info['status'] = 'uploaded'
+                        # If scheduling fails, just mark as failed
+                        self.logger.error(f"Failed to schedule video: {video_info['title']}")
+                        video_info['status'] = 'schedule_failed'
                     
                     # Move processed file
                     self.move_processed_file(video_path)
@@ -283,10 +339,7 @@ class YouTubeShortsAutomation:
                     video_info['error'] = str(e)
         
         self.save_upload_queue()
-        
-        # Also check for any videos ready to be published
-        self.check_and_publish_scheduled_videos()
-
+    
     def check_and_publish_scheduled_videos(self):
         """Check for videos that are ready to be published and make them public"""
         current_time = datetime.now()
@@ -399,17 +452,30 @@ class YouTubeShortsAutomation:
             schedule.run_pending()
             time.sleep(60)  # Check every minute
     
-    def run_manual_generation(self, script: str, voice: str = "nova", speed: float = 1.0, custom_start_time: Optional[datetime] = None):
+    def run_manual_generation(self, script: str, voice: str = "nova", speed: float = 1.0, custom_start_time: Optional[datetime] = None, video_type: str = "short"):
         """Manually trigger video generation with scheduled publishing"""
-        self.logger.info("Manual video generation triggered")
+        self.logger.info(f"Manual video generation triggered for {video_type}")
         
-        # Generate videos using the API
-        video_files = self.api_client.generate_and_download_videos(
-            script=script,
-            download_folder=self.config['files']['download_folder'],
-            voice=voice,
-            speed=speed
-        )
+        video_files = []
+        
+        if video_type == "short":
+            # Generate YouTube Shorts using the existing API (multiple videos from script with pause markers)
+            video_files = self.api_client.generate_and_download_videos(
+                script=script,
+                download_folder=self.config['files']['download_folder'],
+                voice=voice,
+                speed=speed
+            )
+        elif video_type == "post":
+            # Generate YouTube Post using the new Regular Format Voiceover API (single landscape video)
+            video_path = self.voiceover_client.generate_and_download_video(
+                script=script,
+                download_folder=self.config['files']['download_folder'],
+                voice=voice,
+                speed=speed
+            )
+            if video_path:
+                video_files = [video_path]
         
         if video_files:
             # Add videos to upload queue with scheduled publication times
@@ -419,8 +485,9 @@ class YouTubeShortsAutomation:
                 'speed': speed,
                 'generated_at': datetime.now()
             }
-            self.add_videos_to_queue(video_files, script_info, custom_start_time)
-            self.logger.info(f"Generated {len(video_files)} videos with scheduled publication times")
+            self.add_videos_to_queue(video_files, script_info, custom_start_time, video_type)
+            video_type_label = "YouTube Shorts" if video_type == "short" else "YouTube Posts"
+            self.logger.info(f"Generated {len(video_files)} videos with scheduled publication times as {video_type_label}")
             
             # Upload the videos as private and schedule them
             self.upload_pending_videos()
@@ -448,6 +515,16 @@ class YouTubeShortsAutomation:
         
         voice = input("Enter voice (nova/alloy/echo/fable/onyx/shimmer) [nova]: ") or "nova"
         speed = float(input("Enter speed (0.25-4.0) [1.0]: ") or "1.0")
+        
+        # Get video type
+        print("\nVideo Type Options:")
+        print("1. YouTube Shorts (vertical videos with #Shorts)")
+        print("2. YouTube Posts (regular videos without #Shorts)")
+        
+        video_type_choice = input("Choose video type (1-2) [1]: ").strip() or "1"
+        video_type = "short" if video_type_choice == "1" else "post"
+        video_type_label = "YouTube Shorts" if video_type == "short" else "YouTube Posts"
+        print(f"✅ Selected: {video_type_label}")
         
         # Get custom start time
         print("\nScheduling Options:")
@@ -484,7 +561,7 @@ class YouTubeShortsAutomation:
                     # Show the schedule preview
                     interval_hours = self.config['scheduling']['interval_hours']
                     video_count = script.count('— pause —') + 1
-                    print(f"📅 Schedule Preview for {video_count} videos:")
+                    print(f"📅 Schedule Preview for {video_count} {video_type_label}:")
                     for i in range(video_count):
                         video_time = custom_start_time + timedelta(hours=interval_hours * i)
                         print(f"   Video {i+1}: {video_time.strftime('%Y-%m-%d %H:%M')} ({video_time.strftime('%I:%M %p')} IST)")
@@ -501,7 +578,7 @@ class YouTubeShortsAutomation:
                     continue
         
         # Generate videos with the specified scheduling
-        self.run_manual_generation(script, voice, speed, custom_start_time)
+        self.run_manual_generation(script, voice, speed, custom_start_time, video_type)
 
     def get_status(self) -> Dict:
         """Get current status of the automation"""
@@ -570,7 +647,18 @@ def main():
             script = input("Enter script (use — pause — to separate videos): ")
             voice = input("Enter voice (nova/alloy/echo/fable/onyx/shimmer) [nova]: ") or "nova"
             speed = float(input("Enter speed (0.25-4.0) [1.0]: ") or "1.0")
-            automation.run_manual_generation(script, voice, speed)
+            
+            # Get video type
+            print("\nVideo Type Options:")
+            print("1. YouTube Shorts (vertical videos with #Shorts)")
+            print("2. YouTube Posts (regular videos without #Shorts)")
+            
+            video_type_choice = input("Choose video type (1-2) [1]: ").strip() or "1"
+            video_type = "short" if video_type_choice == "1" else "post"
+            video_type_label = "YouTube Shorts" if video_type == "short" else "YouTube Posts"
+            print(f"✅ Selected: {video_type_label}")
+            
+            automation.run_manual_generation(script, voice, speed, None, video_type)
             # Show menu again after task completion
             show_menu()
         

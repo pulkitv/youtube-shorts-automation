@@ -475,136 +475,286 @@ class PDFAPIClient:
         
         return video_files
 
-    def publish_scheduled_videos(self):
-        """Check for videos that should be published now and make them public"""
-        current_time = datetime.now()
-        published_count = 0
-        
-        for video in self.upload_queue:
-            if (video.get('status') == 'scheduled' and 
-                video.get('scheduled_publish_time') and 
-                video.get('video_id')):
-                
-                # Parse scheduled time
-                scheduled_time_str = video['scheduled_publish_time']
-                if isinstance(scheduled_time_str, str):
-                    try:
-                        scheduled_time = datetime.fromisoformat(scheduled_time_str.replace('Z', '+00:00'))
-                        # Convert to local time for comparison
-                        if scheduled_time.tzinfo:
-                            import pytz
-                            local_tz = pytz.timezone('Asia/Kolkata')
-                            scheduled_time = scheduled_time.astimezone(local_tz).replace(tzinfo=None)
-                    except ValueError:
-                        self.logger.error(f"Invalid scheduled time format: {scheduled_time_str}")
-                        continue
-                else:
-                    scheduled_time = scheduled_time_str
-                
-                # Check if it's time to publish (with 5 minute buffer)
-                time_diff = (scheduled_time - current_time).total_seconds()
-                
-                if -300 <= time_diff <= 300:  # Within 5 minutes of scheduled time
-                    # For YouTube's scheduled publishing, we don't need to make videos public manually
-                    # YouTube will automatically publish them at the scheduled time
-                    self.logger.info(f"Video '{video['title']}' (ID: {video['video_id']}) is scheduled for {scheduled_time}")
-                    self.logger.info("YouTube will automatically publish this video at the scheduled time")
-                    
-                    # Update status to indicate it's in YouTube's hands
-                    video['status'] = 'scheduled_on_youtube'
-                    video['last_checked'] = current_time.isoformat()
-                    published_count += 1
-                    
-                elif time_diff < -3600:  # More than 1 hour past scheduled time
-                    # Video should have been published by now, check its actual status
-                    self.logger.warning(f"Video '{video['title']}' was scheduled for {scheduled_time} but is overdue")
-                    
-                    # Optional: Check actual video status on YouTube
-                    try:
-                        channel_info = self.youtube_uploader.get_channel_info()
-                        if channel_info:
-                            # Check if video is now public
-                            response = self.youtube_uploader.youtube.videos().list(
-                                part='status',
-                                id=video['video_id']
-                            ).execute()
-                            
-                            if response['items']:
-                                actual_status = response['items'][0]['status']['privacyStatus']
-                                if actual_status == 'public':
-                                    self.logger.info(f"Video '{video['title']}' is now public on YouTube")
-                                    video['status'] = 'published'
-                                    video['published_at'] = current_time.isoformat()
-                                    published_count += 1
-                                else:
-                                    self.logger.warning(f"Video '{video['title']}' status is still: {actual_status}")
-                            else:
-                                self.logger.error(f"Video '{video['title']}' not found on YouTube (may have been deleted)")
-                                video['status'] = 'failed'
-                    except Exception as e:
-                        self.logger.error(f"Error checking video status: {e}")
-        
-        if published_count > 0:
-            self.save_upload_queue()
-            self.logger.info(f"Updated status for {published_count} scheduled videos")
-        
-        return published_count
 
-    def upload_pending_videos(self):
-        """Upload pending videos to YouTube with scheduled publication times"""
-        uploaded_count = 0
+class RegularVoiceoverAPIClient:
+    """Client for interacting with the Regular Format Voiceover API to generate YouTube Posts"""
+    
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip('/')
+        self.logger = logging.getLogger(__name__)
+        # Add flag for testing mode
+        self.testing_mode = os.getenv('API_TESTING_MODE', 'false').lower() == 'true'
+    
+    def generate_voiceover(self, 
+                          script: str,
+                          voice: str = "nova",
+                          speed: float = 1.0,
+                          format_type: str = "mp4",
+                          background_image_url: Optional[str] = None,
+                          webhook_url: Optional[str] = None) -> Optional[Dict]:
+        """
+        Generate regular format voiceover from script (landscape video for YouTube posts)
         
-        for video in self.upload_queue:
-            if video.get('status') == 'pending' and video.get('video_path'):
-                try:
-                    self.logger.info(f"Uploading video: {video['title']}")
-                    
-                    # Upload video as private first
-                    video_id = self.youtube_uploader.upload_video(
-                        video_path=video['video_path'],
-                        title=video['title'],
-                        description=video['description'],
-                        tags=video.get('tags', []),
-                        privacy_status='private'
-                    )
-                    
-                    if video_id:
-                        # Schedule the video for publication
-                        scheduled_time = video['scheduled_publish_time']
-                        if isinstance(scheduled_time, str):
-                            scheduled_time = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
-                        
-                        success = self.youtube_uploader.schedule_video(video_id, scheduled_time)
-                        
-                        if success:
-                            video['video_id'] = video_id
-                            video['status'] = 'scheduled'
-                            video['uploaded_at'] = datetime.now().isoformat()
-                            
-                            # Move processed file
-                            processed_path = self._move_to_processed(video['video_path'])
-                            if processed_path:
-                                video['processed_path'] = processed_path
-                            
-                            uploaded_count += 1
-                            self.logger.info(f"✅ Successfully scheduled: {video['title']} (ID: {video_id}) for {scheduled_time}")
-                            self.logger.info(f"🎬 Video will be automatically published by YouTube at the scheduled time")
-                        else:
-                            self.logger.error(f"❌ Failed to schedule video: {video['title']} (ID: {video_id})")
-                            video['status'] = 'upload_failed'
-                            video['upload_attempts'] = video.get('upload_attempts', 0) + 1
-                    else:
-                        self.logger.error(f"❌ Failed to upload video: {video['title']}")
-                        video['status'] = 'upload_failed'
-                        video['upload_attempts'] = video.get('upload_attempts', 0) + 1
-                        
-                except Exception as e:
-                    self.logger.error(f"❌ Error uploading video {video['title']}: {e}")
-                    video['status'] = 'upload_failed'
-                    video['upload_attempts'] = video.get('upload_attempts', 0) + 1
+        Args:
+            script: Text content to convert to voiceover (no pause markers needed)
+            voice: Voice type (nova, alloy, echo, fable, onyx, shimmer)
+            speed: Speech speed between 0.25 and 4.0
+            format_type: Output format (mp3, wav, mp4)
+            background_image_url: Optional background image URL
+            webhook_url: Optional webhook URL for completion notification
+            
+        Returns:
+            Response dict with session_id and status, None if failed
+        """
+        # Initialize session tracking
+        if not hasattr(self, '_session_start_times'):
+            self._session_start_times = {}
         
-        if uploaded_count > 0:
-            self.save_upload_queue()
-            self.logger.info(f"📊 Uploaded and scheduled {uploaded_count} videos")
+        # Testing mode - simulate successful API response
+        if self.testing_mode:
+            import uuid
+            session_id = f"voiceover_mock_{uuid.uuid4()}"
+            self._session_start_times[session_id] = time.time()
+            self.logger.info(f"🧪 Testing mode: Simulating voiceover API call for session {session_id}")
+            return {
+                "success": True,
+                "session_id": session_id,
+                "message": "Voiceover generation started",
+                "status_url": f"/api/v1/voiceover/status/{session_id}"
+            }
         
-        return uploaded_count
+        url = f"{self.base_url}/api/v1/voiceover/generate"
+        
+        payload = {
+            "script": script,
+            "voice": voice,
+            "speed": speed,
+            "format": format_type
+        }
+        
+        if background_image_url:
+            payload["background_image_url"] = background_image_url
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+        
+        try:
+            self.logger.info(f"Requesting voiceover generation for script: {script[:100]}...")
+            response = requests.post(url, json=payload, timeout=30)
+            
+            if response.status_code == 202:
+                data = response.json()
+                session_id = data.get('session_id')
+                if session_id:
+                    self._session_start_times[session_id] = time.time()
+                self.logger.info(f"Voiceover generation started. Session ID: {session_id}")
+                return data
+            else:
+                self.logger.error(f"API request failed: {response.status_code} - {response.text}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to connect to voiceover API: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error: {e}")
+            return None
+    
+    def check_status(self, session_id: str) -> Optional[Dict]:
+        """
+        Check the status of a voiceover generation request
+        
+        Args:
+            session_id: Session ID from the generation request
+            
+        Returns:
+            Status dict with progress info, None if failed
+        """
+        # Testing mode - simulate status progression
+        if self.testing_mode and session_id.startswith("voiceover_mock_"):
+            current_time = time.time()
+            session_start = current_time - 15  # Assume started 15 seconds ago for testing
+            elapsed = current_time - session_start
+            
+            if elapsed < 5:
+                return {
+                    "session_id": session_id,
+                    "status": "processing",
+                    "progress": 30,
+                    "message": "Generating audio from text..."
+                }
+            elif elapsed < 10:
+                return {
+                    "session_id": session_id,
+                    "status": "processing", 
+                    "progress": 70,
+                    "message": "Creating video with waveform..."
+                }
+            else:
+                return {
+                    "session_id": session_id,
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Voiceover generation completed successfully!",
+                    "result": {
+                        "file_url": f"https://mock-domain.com/download-voiceover/mock_video_{session_id}.mp4",
+                        "filename": f"mock_video_{session_id}.mp4",
+                        "duration": 45.6,
+                        "format": "mp4",
+                        "file_size": "12.8 MB"
+                    }
+                }
+        
+        url = f"{self.base_url}/api/v1/voiceover/status/{session_id}"
+        
+        try:
+            response = requests.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self.logger.error(f"Status check failed: {response.status_code} - {response.text}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to check voiceover status: {e}")
+            return None
+    
+    def wait_for_completion(self, session_id: str, max_wait_time: int = 300, poll_interval: int = 5) -> Optional[Dict]:
+        """
+        Wait for voiceover generation to complete
+        
+        Args:
+            session_id: Session ID to monitor
+            max_wait_time: Maximum time to wait in seconds (default: 5 minutes)
+            poll_interval: How often to check status in seconds (default: 5 seconds)
+            
+        Returns:
+            Final status dict with result, None if failed or timeout
+        """
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait_time:
+            status = self.check_status(session_id)
+            
+            if not status:
+                return None
+            
+            current_status = status.get('status')
+            progress = status.get('progress', 0)
+            message = status.get('message', '')
+            
+            self.logger.info(f"Voiceover Progress: {progress}% - {message}")
+            
+            if current_status == 'completed':
+                self.logger.info("Voiceover generation completed successfully!")
+                return status
+            elif current_status == 'failed':
+                error = status.get('error', 'Unknown error')
+                self.logger.error(f"Voiceover generation failed: {error}")
+                return None
+            
+            time.sleep(poll_interval)
+        
+        self.logger.error(f"Timeout waiting for voiceover completion after {max_wait_time} seconds")
+        return None
+    
+    def download_file(self, session_id: str, download_path: str) -> bool:
+        """
+        Download the generated voiceover file directly
+        
+        Args:
+            session_id: Session ID of the completed generation
+            download_path: Local path to save the file
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Testing mode - simulate download
+        if self.testing_mode and "voiceover_mock_" in session_id:
+            self.logger.info("🧪 Testing mode: Simulating voiceover file download...")
+            os.makedirs(os.path.dirname(download_path), exist_ok=True)
+            
+            # Create a mock MP4 file
+            with open(download_path, 'wb') as f:
+                # Write minimal MP4 header
+                f.write(b'\x00\x00\x00\x20ftypmp41\x00\x00\x00\x00mp41isom')
+                f.write(b'\x00' * 2048)  # Larger mock file for posts
+            
+            return True
+        
+        url = f"{self.base_url}/api/v1/voiceover/download/{session_id}"
+        
+        try:
+            self.logger.info(f"Downloading voiceover file from: {url}")
+            
+            # Ensure download directory exists
+            os.makedirs(os.path.dirname(download_path), exist_ok=True)
+            
+            response = requests.get(url, stream=True, timeout=60)
+            response.raise_for_status()
+            
+            with open(download_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            self.logger.info(f"Voiceover file downloaded successfully: {download_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to download voiceover file: {e}")
+            return False
+    
+    def generate_and_download_video(self, 
+                                   script: str,
+                                   download_folder: str,
+                                   voice: str = "nova",
+                                   speed: float = 1.0,
+                                   background_image_url: Optional[str] = None) -> Optional[str]:
+        """
+        Complete workflow: generate voiceover, wait for completion, download video file
+        
+        Args:
+            script: Text content to convert to voiceover (no pause markers)
+            download_folder: Folder to download the video file
+            voice: Voice type
+            speed: Speech speed
+            background_image_url: Optional background image
+            
+        Returns:
+            Path to downloaded video file, None if failed
+        """
+        # Start generation
+        response = self.generate_voiceover(script, voice, speed, "mp4", background_image_url)
+        if not response:
+            return None
+        
+        session_id = response.get('session_id')
+        if not session_id:
+            return None
+        
+        # Wait for completion
+        final_status = self.wait_for_completion(session_id)
+        if not final_status:
+            return None
+        
+        result = final_status.get('result')
+        if not result:
+            self.logger.error("No result in completed voiceover response")
+            return None
+        
+        # Generate filename based on script content
+        script_words = script.split()[:5]  # First 5 words
+        safe_filename = "_".join(word.strip(".,!?;:") for word in script_words if word.isalnum())
+        safe_filename = safe_filename[:50]  # Limit length
+        
+        if not safe_filename:
+            safe_filename = f"voiceover_{int(time.time())}"
+        
+        video_filename = f"{safe_filename}.mp4"
+        video_path = os.path.join(download_folder, video_filename)
+        
+        # Download the video file
+        if self.download_file(session_id, video_path):
+            return video_path
+        else:
+            return None
