@@ -7,8 +7,10 @@ import threading
 from datetime import datetime
 from pathlib import Path
 import logging
-import requests
-from urllib.parse import urljoin
+from werkzeug.utils import secure_filename
+
+# Import the actual voiceover system used by the UI
+from voiceover_system import VoiceoverSystem
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,127 +24,104 @@ os.makedirs('temp', exist_ok=True)
 os.makedirs('uploads', exist_ok=True)
 os.makedirs('processed', exist_ok=True)
 
-# Configuration for external video generation API
-VIDEO_API_CONFIG = {
-    'base_url': os.getenv('VIDEO_API_BASE_URL', 'https://api.your-video-service.com'),
-    'api_key': os.getenv('VIDEO_API_KEY', ''),
-    'timeout': int(os.getenv('VIDEO_API_TIMEOUT', '300')),  # 5 minutes default
-    'max_retries': int(os.getenv('VIDEO_API_MAX_RETRIES', '3'))
-}
+# Initialize the voiceover system (same as main UI)
+voiceover_system = VoiceoverSystem()
 
 # In-memory storage for session tracking
 sessions = {}
 session_lock = threading.Lock()
 
-def call_external_video_api(endpoint, payload, session_id):
-    """Make API call to external video generation service"""
-    try:
-        headers = {
-            'Authorization': f'Bearer {VIDEO_API_CONFIG["api_key"]}',
-            'Content-Type': 'application/json',
-            'User-Agent': 'YouTube-Automation-Service/1.0'
-        }
-        
-        url = urljoin(VIDEO_API_CONFIG['base_url'], endpoint)
-        
-        logger.info(f"Calling external API: {url} for session {session_id}")
-        
-        response = requests.post(
-            url,
-            json=payload,
-            headers=headers,
-            timeout=VIDEO_API_CONFIG['timeout']
-        )
-        
-        response.raise_for_status()
-        return response.json()
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"External API call failed for session {session_id}: {e}")
-        raise Exception(f"Video generation service error: {str(e)}")
-
-def download_video_from_url(video_url, local_filename, session_id):
-    """Download video file from external API to local storage"""
-    try:
-        headers = {}
-        if VIDEO_API_CONFIG['api_key']:
-            headers['Authorization'] = f'Bearer {VIDEO_API_CONFIG["api_key"]}'
-        
-        response = requests.get(video_url, headers=headers, stream=True, timeout=300)
-        response.raise_for_status()
-        
-        local_path = os.path.join('voiceovers', local_filename)
-        
-        with open(local_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        
-        logger.info(f"Downloaded video file {local_filename} for session {session_id}")
-        return local_path
-        
-    except Exception as e:
-        logger.error(f"Failed to download video for session {session_id}: {e}")
-        raise
-
 def generate_real_video(session_id, script, voice, speed, video_type="short"):
-    """Generate real videos using external AI video generation service"""
+    """Generate real videos using the local voiceover system (same as main UI)"""
     try:
         with session_lock:
             sessions[session_id]["status"] = "processing"
             sessions[session_id]["progress"] = 10
-            sessions[session_id]["message"] = "Connecting to video generation service..."
+            sessions[session_id]["message"] = "Starting video generation..."
         
-        # Prepare payload for external API
-        if video_type == "short":
-            payload = {
-                'type': 'youtube_shorts',
-                'script': script,
-                'voice': voice,
-                'speed': speed,
-                'format': 'mp4',
-                'orientation': 'vertical',
-                'split_on_pause': True,
-                'max_duration_per_segment': 60,
-                'callback_url': f'http://localhost:5000/api/v1/webhook/video-complete/{session_id}'
-            }
-            endpoint = '/api/v1/shorts/generate'
-        else:
-            payload = {
-                'type': 'voiceover_video',
-                'script': script,
-                'voice': voice,
-                'speed': speed,
-                'format': 'mp4',
-                'orientation': 'landscape',
-                'include_waveform': True,
-                'background_type': 'gradient',
-                'callback_url': f'http://localhost:5000/api/v1/webhook/video-complete/{session_id}'
-            }
-            endpoint = '/api/v1/generate/voiceover'
+        logger.info(f"Starting local video generation for session {session_id}")
         
+        # Update progress
         with session_lock:
             sessions[session_id]["progress"] = 25
-            sessions[session_id]["message"] = "Submitting request to video generation service..."
+            sessions[session_id]["message"] = "Generating videos using local system..."
         
-        # Call external API
-        api_response = call_external_video_api(endpoint, payload, session_id)
+        # Use the same logic as the main UI - voiceover_system handles pause markers automatically
+        if video_type == "short":
+            # YouTube Shorts generation - voiceover_system will automatically split by pause markers
+            result = voiceover_system.generate_speech(
+                text=script,
+                voice=voice,
+                speed=speed,
+                format='mp4',  # YouTube Shorts are always MP4
+                session_id=session_id,
+                background_image_path=None,  # Can be enhanced later to support background images
+                generation_type='youtube_shorts'  # This enables pause marker splitting in voiceover_system
+            )
+        else:
+            # Regular voiceover generation
+            result = voiceover_system.generate_speech(
+                text=script,
+                voice=voice,
+                speed=speed,
+                format='mp4',
+                session_id=session_id,
+                background_image_path=None,
+                generation_type='regular'
+            )
         
-        # Store external job ID for tracking
-        external_job_id = api_response.get('job_id') or api_response.get('session_id')
-        
+        # Update progress
         with session_lock:
-            sessions[session_id]["external_job_id"] = external_job_id
-            sessions[session_id]["progress"] = 50
-            sessions[session_id]["message"] = "Video generation in progress..."
+            sessions[session_id]["progress"] = 90
+            sessions[session_id]["message"] = "Processing completed videos..."
         
-        # Poll for completion or wait for webhook
-        if api_response.get('status') == 'processing':
-            # Start polling for status updates
-            poll_external_api_status(session_id, external_job_id, video_type)
-        elif api_response.get('status') == 'completed':
-            # Immediate completion
-            process_completed_video(session_id, api_response, video_type)
+        if result['success']:
+            if video_type == "short":
+                # For YouTube Shorts, the result contains a ZIP file with multiple videos
+                # voiceover_system has already handled the pause marker splitting
+                with session_lock:
+                    sessions[session_id]["status"] = "completed"
+                    sessions[session_id]["progress"] = 100
+                    sessions[session_id]["message"] = "YouTube Shorts generated successfully!"
+                    sessions[session_id]["zip_url"] = f"http://localhost:5000{result['file_url']}"
+                    
+                    # Get segment count from the result (voiceover_system provides this)
+                    segments = result.get('segments', 1)
+                    sessions[session_id]["count"] = segments
+                    sessions[session_id]["videos"] = []
+                    
+                    # Create video array based on actual segments generated
+                    for i in range(segments):
+                        sessions[session_id]["videos"].append({
+                            "index": i + 1,
+                            "file_url": f"/download-voiceover/{session_id}_part_{i+1}.mp4",
+                            "duration": result.get('duration', 8.5),
+                            "format": "mp4",
+                            "download_name": f"{session_id}_part_{i+1}.mp4"
+                        })
+            else:
+                # Regular voiceover
+                with session_lock:
+                    sessions[session_id]["status"] = "completed"
+                    sessions[session_id]["progress"] = 100
+                    sessions[session_id]["message"] = "Voiceover generated successfully!"
+                    sessions[session_id]["result"] = {
+                        "file_url": f"http://localhost:5000{result['file_url']}",
+                        "filename": result.get('filename', f'voiceover_{session_id}.mp4'),
+                        "duration": result.get('duration', 0),
+                        "format": "mp4"
+                    }
+            
+            logger.info(f"Video generation completed successfully for session {session_id}")
+        else:
+            # Handle error
+            error_message = result.get('error', 'Unknown error occurred')
+            with session_lock:
+                sessions[session_id]["status"] = "failed"
+                sessions[session_id]["error"] = error_message
+                sessions[session_id]["message"] = f"Video generation failed: {error_message}"
+            
+            logger.error(f"Video generation failed for session {session_id}: {error_message}")
         
     except Exception as e:
         logger.error(f"Error in real video generation: {e}")
@@ -150,132 +129,6 @@ def generate_real_video(session_id, script, voice, speed, video_type="short"):
             sessions[session_id]["status"] = "failed"
             sessions[session_id]["error"] = str(e)
             sessions[session_id]["message"] = f"Video generation failed: {str(e)}"
-
-def poll_external_api_status(session_id, external_job_id, video_type):
-    """Poll external API for job status updates"""
-    max_polls = 60  # 5 minutes with 5-second intervals
-    poll_count = 0
-    
-    while poll_count < max_polls:
-        try:
-            time.sleep(5)  # Wait 5 seconds between polls
-            poll_count += 1
-            
-            # Check if session was cancelled
-            with session_lock:
-                if sessions.get(session_id, {}).get("status") == "cancelled":
-                    return
-            
-            # Poll external API - use shorts-specific endpoint for shorts
-            if video_type == "short":
-                status_url = f'/api/v1/shorts/status/{external_job_id}'
-            else:
-                status_url = f'/api/v1/status/{external_job_id}'
-            
-            headers = {
-                'Authorization': f'Bearer {VIDEO_API_CONFIG["api_key"]}',
-                'Content-Type': 'application/json'
-            }
-            
-            url = urljoin(VIDEO_API_CONFIG['base_url'], status_url)
-            response = requests.get(url, headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            status_data = response.json()
-            
-            # Update session with external API progress
-            with session_lock:
-                external_progress = status_data.get('progress', 50)
-                sessions[session_id]["progress"] = min(50 + (external_progress // 2), 90)
-                sessions[session_id]["message"] = status_data.get('message', 'Processing video...')
-            
-            if status_data.get('status') == 'completed':
-                process_completed_video(session_id, status_data, video_type)
-                return
-            elif status_data.get('status') == 'failed':
-                with session_lock:
-                    sessions[session_id]["status"] = "failed"
-                    sessions[session_id]["error"] = status_data.get('error', 'Video generation failed')
-                return
-                
-        except Exception as e:
-            logger.error(f"Error polling external API for session {session_id}: {e}")
-            poll_count += 1
-    
-    # Timeout
-    with session_lock:
-        sessions[session_id]["status"] = "failed"
-        sessions[session_id]["error"] = "Video generation timed out"
-
-def process_completed_video(session_id, api_response, video_type):
-    """Process completed video from external API"""
-    try:
-        with session_lock:
-            sessions[session_id]["progress"] = 90
-            sessions[session_id]["message"] = "Downloading generated videos..."
-        
-        if video_type == "short":
-            # Handle multiple video files for shorts
-            videos = api_response.get('videos', [])
-            video_files = []
-            
-            for i, video_data in enumerate(videos):
-                video_url = video_data.get('download_url')
-                if video_url:
-                    filename = f"api_shorts_{session_id}_part_{i+1}.mp4"
-                    download_video_from_url(video_url, filename, session_id)
-                    video_files.append(filename)
-            
-            # Create ZIP if multiple files
-            if len(video_files) > 1:
-                import zipfile
-                zip_filename = f"api_shorts_{session_id}.zip"
-                zip_path = os.path.join('voiceovers', zip_filename)
-                
-                with zipfile.ZipFile(zip_path, 'w') as zipf:
-                    for video_file in video_files:
-                        video_path = os.path.join('voiceovers', video_file)
-                        if os.path.exists(video_path):
-                            zipf.write(video_path, video_file)
-                
-                with session_lock:
-                    sessions[session_id]["status"] = "completed"
-                    sessions[session_id]["progress"] = 100
-                    sessions[session_id]["message"] = "All videos generated successfully!"
-                    sessions[session_id]["zip_url"] = f"http://localhost:5000/download-voiceover/{zip_filename}"
-            else:
-                with session_lock:
-                    sessions[session_id]["status"] = "completed"
-                    sessions[session_id]["progress"] = 100
-                    sessions[session_id]["message"] = "Video generated successfully!"
-                    sessions[session_id]["zip_url"] = f"http://localhost:5000/download-voiceover/{video_files[0]}"
-        
-        else:
-            # Handle single video for voiceover
-            video_url = api_response.get('download_url')
-            if video_url:
-                filename = f"api_voiceover_{session_id}.mp4"
-                download_video_from_url(video_url, filename, session_id)
-                
-                with session_lock:
-                    sessions[session_id]["status"] = "completed"
-                    sessions[session_id]["progress"] = 100
-                    sessions[session_id]["message"] = "Voiceover generation completed successfully!"
-                    sessions[session_id]["result"] = {
-                        "file_url": f"http://localhost:5000/download-voiceover/{filename}",
-                        "filename": filename,
-                        "duration": api_response.get('duration', 0),
-                        "format": "mp4",
-                        "file_size": api_response.get('file_size', 'Unknown')
-                    }
-        
-        logger.info(f"Video generation completed for session {session_id}")
-        
-    except Exception as e:
-        logger.error(f"Error processing completed video: {e}")
-        with session_lock:
-            sessions[session_id]["status"] = "failed"
-            sessions[session_id]["error"] = str(e)
 
 @app.route('/')
 def home():
@@ -450,8 +303,8 @@ def generate_voiceover():
         if not script:
             return jsonify({"error": "Script is required"}), 400
         
-        voice = data.get('voice', 'nova')
-        speed = data.get('speed', 1.0)
+        voice = data.get('voice', 'onyx')
+        speed = data.get('speed', 1.2)
         format_type = data.get('format', 'mp4')
         background_image_url = data.get('background_image_url')
         webhook_url = data.get('webhook_url')
@@ -523,8 +376,8 @@ def voiceover_status(session_id):
             "progress": session["progress"],
             "message": session["message"],
             "script": session.get("script", ""),
-            "voice": session.get("voice", "nova"),
-            "speed": session.get("speed", 1.0),
+            "voice": session.get("voice", "onyx"),
+            "speed": session.get("speed", 1.2),
             "format": session.get("format", "mp4"),
             "created_at": session["created_at"]
         }
@@ -629,6 +482,170 @@ def api_status():
     except Exception as e:
         logger.error(f"Error in api_status: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/stats', methods=['GET'])
+def get_automation_stats():
+    """Get comprehensive automation statistics"""
+    try:
+        stats = automation.get_automation_stats()
+        return jsonify({
+            'success': True,
+            'stats': stats
+        })
+    except Exception as e:
+        logger.error(f"Failed to get stats: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/iteration/run', methods=['POST'])
+def run_iteration():
+    """Manually trigger an automation iteration"""
+    try:
+        data = request.get_json() or {}
+        custom_scripts = data.get('custom_scripts', [])
+        script_sources = data.get('script_sources', [])
+        
+        logger.info(f"Manual iteration triggered with {len(custom_scripts)} custom scripts")
+        
+        # Run iteration in background
+        results = automation.run_automation_iteration(
+            script_sources=script_sources,
+            custom_scripts=custom_scripts
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Iteration completed',
+            'results': results
+        })
+        
+    except Exception as e:
+        logger.error(f"Manual iteration failed: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/retry-failed', methods=['POST'])
+def retry_failed_uploads():
+    """Retry failed uploads with smart backoff"""
+    try:
+        retry_count = automation.smart_retry_failed_uploads()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Set up {retry_count} videos for retry',
+            'retry_count': retry_count
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to retry uploads: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/cleanup', methods=['POST'])
+def cleanup_old_files():
+    """Clean up old processed videos"""
+    try:
+        data = request.get_json() or {}
+        days_old = data.get('days_old', 7)
+        
+        cleaned_count = automation.cleanup_old_videos(days_old)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Cleaned up {cleaned_count} old video files',
+            'cleaned_count': cleaned_count
+        })
+        
+    except Exception as e:
+        logger.error(f"Cleanup failed: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/queue/status', methods=['GET'])
+def get_queue_status():
+    """Get current upload queue status with detailed breakdown"""
+    try:
+        queue_data = automation.load_upload_queue()
+        
+        # Organize by status
+        status_breakdown = {}
+        for video in queue_data:
+            status = video.get('status', 'unknown')
+            if status not in status_breakdown:
+                status_breakdown[status] = []
+            status_breakdown[status].append({
+                'title': video.get('title', 'Unknown'),
+                'scheduled_time': video.get('scheduled_time'),
+                'file_path': video.get('file_path'),
+                'upload_attempts': video.get('upload_attempts', 0),
+                'last_attempt_time': video.get('last_attempt_time')
+            })
+        
+        return jsonify({
+            'success': True,
+            'total_videos': len(queue_data),
+            'status_breakdown': status_breakdown,
+            'queue_health': {
+                'pending_count': len(status_breakdown.get('pending', [])),
+                'failed_count': len(status_breakdown.get('failed', [])),
+                'success_rate': len(status_breakdown.get('uploaded', [])) / max(1, len(queue_data)) * 100
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to get queue status: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/schedule/optimize', methods=['POST'])
+def optimize_schedule():
+    """Optimize upload schedule based on performance data"""
+    try:
+        data = request.get_json() or {}
+        target_uploads_per_day = data.get('target_uploads_per_day', 10)
+        
+        # Get current stats
+        stats = automation.get_automation_stats()
+        avg_performance = stats.get('avg_performance', {})
+        
+        # Calculate optimal scheduling
+        if avg_performance.get('avg_videos_per_minute', 0) > 0:
+            estimated_time_per_video = 1 / avg_performance['avg_videos_per_minute']
+            optimal_interval_hours = (estimated_time_per_video * 60) / target_uploads_per_day * 24
+            
+            recommendation = {
+                'optimal_interval_hours': round(optimal_interval_hours, 2),
+                'estimated_daily_capacity': round(24 / optimal_interval_hours, 1),
+                'current_success_rate': avg_performance.get('avg_success_rate', 0) * 100
+            }
+        else:
+            recommendation = {
+                'message': 'Insufficient performance data for optimization',
+                'suggestion': 'Run a few iterations first to gather performance metrics'
+            }
+        
+        return jsonify({
+            'success': True,
+            'optimization': recommendation,
+            'current_stats': stats
+        })
+        
+    except Exception as e:
+        logger.error(f"Schedule optimization failed: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 if __name__ == '__main__':
     print("🚀 Starting YouTube Video Generation API Server...")

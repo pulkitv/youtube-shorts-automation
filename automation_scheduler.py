@@ -4,6 +4,8 @@ import logging
 import schedule
 import time
 import threading
+import sys
+import importlib
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
@@ -49,6 +51,24 @@ class YouTubeShortsAutomation:
         
         # Create directories
         self.create_directories()
+        
+        # Add iteration tracking
+        self.iteration_stats = {
+            'total_videos_generated': 0,
+            'successful_uploads': 0,
+            'failed_uploads': 0,
+            'last_iteration_time': None,
+            'performance_metrics': []
+        }
+        
+        # Enhanced retry configuration
+        self.retry_config = {
+            'max_retries': 5,
+            'backoff_factor': 2,
+            'retry_delay_minutes': [5, 15, 30, 60, 120]  # Progressive delays
+        }
+        
+        self.logger.info("Enhanced automation with iteration tracking initialized")
         
         self.logger.info("YouTube Shorts & Posts Automation initialized successfully")
     
@@ -203,7 +223,7 @@ class YouTubeShortsAutomation:
             # If no future videos scheduled, start from current time
             return current_time
     
-    def generate_videos_from_script(self, script: str, voice: str = "nova", speed: float = 1.0) -> List[str]:
+    def generate_videos_from_script(self, script: str, voice: str = "onyx", speed: float = 1.2) -> List[str]:
         """Generate videos from a script using the API"""
         self.logger.info("Starting video generation from script")
         
@@ -231,7 +251,7 @@ class YouTubeShortsAutomation:
             self.logger.error(f"Failed to generate videos: {e}")
             return []
     
-    def generate_youtube_posts_from_script(self, script: str, voice: str = "nova", speed: float = 1.0) -> List[str]:
+    def generate_youtube_posts_from_script(self, script: str, voice: str = "onyx", speed: float = 1.2) -> List[str]:
         """Generate YouTube Posts (landscape videos) from a script using the Regular Format Voiceover API"""
         self.logger.info("Starting YouTube Posts generation from script")
         
@@ -405,16 +425,36 @@ class YouTubeShortsAutomation:
         """Run the scheduled video generation and upload"""
         self.logger.info("Running scheduled video generation and upload")
         
-        # Example script - you can modify this or load from external source
-        sample_scripts = [
-            "Today's market update shows strong performance across sectors. — pause — Technology stocks lead the gains with innovative breakthroughs. — pause — Economic indicators remain positive for continued growth.",
-            "Breaking news in the business world today. — pause — Major merger announced between industry leaders. — pause — Analysts predict significant market impact.",
-            "Global economic trends show promising developments. — pause — Emerging markets demonstrate resilience. — pause — Investment opportunities continue to expand."
-        ]
+        try:
+            # Clear any cached module to ensure we get the latest version
+            if 'market_scripts' in sys.modules:
+                del sys.modules['market_scripts']
+            
+            # Import fresh version
+            import market_scripts
+            
+            # Get the script content
+            if hasattr(market_scripts, 'MARKET_SCRIPT'):
+                if isinstance(market_scripts.MARKET_SCRIPT, list):
+                    sample_scripts = market_scripts.MARKET_SCRIPT
+                else:
+                    # If it's a single string, convert to list
+                    sample_scripts = [market_scripts.MARKET_SCRIPT]
+            else:
+                raise AttributeError("MARKET_SCRIPT not found in market_scripts.py")
+                
+            self.logger.info(f"✅ Successfully loaded updated script from market_scripts.py ({len(sample_scripts)} scripts available)")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to load from market_scripts.py: {e}")
+            self.logger.error("Please ensure market_scripts.py exists and contains MARKET_SCRIPT variable")
+            return
         
-        # Rotate through scripts or implement your own logic
+        # Use the loaded script (rotate if multiple scripts available)
         script_index = len(self.upload_queue) % len(sample_scripts)
         script = sample_scripts[script_index]
+        
+        self.logger.info(f"Using script {script_index + 1} of {len(sample_scripts)}: {script[:100]}...")
         
         # Generate videos
         video_files = self.generate_videos_from_script(script)
@@ -452,7 +492,7 @@ class YouTubeShortsAutomation:
             schedule.run_pending()
             time.sleep(60)  # Check every minute
     
-    def run_manual_generation(self, script: str, voice: str = "nova", speed: float = 1.0, custom_start_time: Optional[datetime] = None, video_type: str = "short"):
+    def run_manual_generation(self, script: str, voice: str = "onyx", speed: float = 1.2, custom_start_time: Optional[datetime] = None, video_type: str = "short"):
         """Manually trigger video generation with scheduled publishing"""
         self.logger.info(f"Manual video generation triggered for {video_type}")
         
@@ -513,8 +553,8 @@ class YouTubeShortsAutomation:
         else:
             script = input("Enter script (use — pause — to separate videos): ")
         
-        voice = input("Enter voice (nova/alloy/echo/fable/onyx/shimmer) [nova]: ") or "nova"
-        speed = float(input("Enter speed (0.25-4.0) [1.0]: ") or "1.0")
+        voice = input("Enter voice (nova/alloy/echo/fable/onyx/shimmer) [onyx]: ") or "onyx"
+        speed = float(input("Enter speed (0.25-4.0) [1.2]: ") or "1.2")
         
         # Get video type
         print("\nVideo Type Options:")
@@ -610,6 +650,168 @@ class YouTubeShortsAutomation:
             'total_videos_processed': len(self.upload_queue)
         }
 
+    def run_automation_iteration(self, script_sources: List[str] = None, custom_scripts: List[str] = None):
+        """Run a complete automation iteration with enhanced monitoring"""
+        iteration_start = datetime.now()
+        self.logger.info(f"Starting automation iteration at {iteration_start}")
+        
+        try:
+            iteration_results = {
+                'start_time': iteration_start,
+                'scripts_processed': 0,
+                'videos_generated': 0,
+                'videos_uploaded': 0,
+                'errors': []
+            }
+            
+            # Process custom scripts if provided
+            if custom_scripts:
+                for script in custom_scripts:
+                    try:
+                        self.logger.info(f"Processing custom script: {script[:50]}...")
+                        
+                        # Generate both shorts and posts
+                        shorts = self.generate_videos_from_script(script)
+                        posts = self.generate_youtube_posts_from_script(script)
+                        
+                        iteration_results['scripts_processed'] += 1
+                        iteration_results['videos_generated'] += len(shorts) + len(posts)
+                        
+                    except Exception as e:
+                        error_msg = f"Failed to process custom script: {e}"
+                        self.logger.error(error_msg)
+                        iteration_results['errors'].append(error_msg)
+            
+            # Upload all pending videos
+            uploaded_count = self.upload_pending_videos()
+            iteration_results['videos_uploaded'] = uploaded_count
+            
+            # Update stats
+            self.iteration_stats['total_videos_generated'] += iteration_results['videos_generated']
+            self.iteration_stats['successful_uploads'] += iteration_results['videos_uploaded']
+            self.iteration_stats['last_iteration_time'] = iteration_start
+            
+            # Calculate performance metrics
+            iteration_duration = datetime.now() - iteration_start
+            performance_metric = {
+                'timestamp': iteration_start,
+                'duration_minutes': iteration_duration.total_seconds() / 60,
+                'videos_per_minute': iteration_results['videos_generated'] / max(1, iteration_duration.total_seconds() / 60),
+                'success_rate': iteration_results['videos_uploaded'] / max(1, iteration_results['videos_generated'])
+            }
+            self.iteration_stats['performance_metrics'].append(performance_metric)
+            
+            # Keep only last 50 metrics
+            if len(self.iteration_stats['performance_metrics']) > 50:
+                self.iteration_stats['performance_metrics'] = self.iteration_stats['performance_metrics'][-50:]
+            
+            self.logger.info(f"Iteration completed in {iteration_duration.total_seconds():.1f} seconds")
+            self.logger.info(f"Generated {iteration_results['videos_generated']} videos, uploaded {iteration_results['videos_uploaded']}")
+            
+            return iteration_results
+            
+        except Exception as e:
+            self.logger.error(f"Automation iteration failed: {e}")
+            self.iteration_stats['failed_uploads'] += 1
+            return None
+    
+    def get_automation_stats(self) -> Dict:
+        """Get comprehensive automation statistics"""
+        current_time = datetime.now()
+        
+        # Calculate queue statistics
+        queue_stats = {
+            'total_videos': len(self.upload_queue),
+            'pending': len([v for v in self.upload_queue if v['status'] == 'pending']),
+            'scheduled': len([v for v in self.upload_queue if v['status'] == 'scheduled']),
+            'uploaded': len([v for v in self.upload_queue if v['status'] == 'uploaded']),
+            'failed': len([v for v in self.upload_queue if v['status'] == 'failed'])
+        }
+        
+        # Calculate performance averages
+        recent_metrics = self.iteration_stats['performance_metrics'][-10:]  # Last 10 iterations
+        avg_performance = {}
+        if recent_metrics:
+            avg_performance = {
+                'avg_duration_minutes': sum(m['duration_minutes'] for m in recent_metrics) / len(recent_metrics),
+                'avg_videos_per_minute': sum(m['videos_per_minute'] for m in recent_metrics) / len(recent_metrics),
+                'avg_success_rate': sum(m['success_rate'] for m in recent_metrics) / len(recent_metrics)
+            }
+        
+        return {
+            'iteration_stats': self.iteration_stats,
+            'queue_stats': queue_stats,
+            'avg_performance': avg_performance,
+            'last_updated': current_time.isoformat()
+        }
+    
+    def cleanup_old_videos(self, days_old: int = 7):
+        """Clean up old processed videos to save disk space"""
+        try:
+            processed_folder = Path(self.config['files']['processed_folder'])
+            current_time = datetime.now()
+            
+            cleaned_count = 0
+            for video_file in processed_folder.glob('*.mp4'):
+                # Get file modification time
+                file_time = datetime.fromtimestamp(video_file.stat().st_mtime)
+                
+                # Delete if older than specified days
+                if (current_time - file_time).days > days_old:
+                    video_file.unlink()
+                    cleaned_count += 1
+                    self.logger.info(f"Cleaned up old video: {video_file.name}")
+            
+            self.logger.info(f"Cleaned up {cleaned_count} old video files")
+            return cleaned_count
+            
+        except Exception as e:
+            self.logger.error(f"Failed to cleanup old videos: {e}")
+            return 0
+    
+    def smart_retry_failed_uploads(self):
+        """Intelligently retry failed uploads with exponential backoff"""
+        failed_videos = [v for v in self.upload_queue if v['status'] == 'failed']
+        
+        if not failed_videos:
+            self.logger.info("No failed uploads to retry")
+            return 0
+        
+        retry_count = 0
+        for video_info in failed_videos:
+            try:
+                attempts = video_info.get('upload_attempts', 0)
+                
+                # Check if we should retry based on attempt count and time
+                if attempts < self.retry_config['max_retries']:
+                    # Calculate delay based on attempt number
+                    delay_minutes = self.retry_config['retry_delay_minutes'][min(attempts, len(self.retry_config['retry_delay_minutes']) - 1)]
+                    
+                    # Check if enough time has passed since last attempt
+                    last_attempt = video_info.get('last_attempt_time')
+                    if last_attempt:
+                        last_attempt_dt = datetime.fromisoformat(last_attempt) if isinstance(last_attempt, str) else last_attempt
+                        time_since_attempt = datetime.now() - last_attempt_dt
+                        
+                        if time_since_attempt.total_seconds() < delay_minutes * 60:
+                            continue  # Not enough time has passed
+                    
+                    # Retry the upload
+                    self.logger.info(f"Retrying upload for: {video_info['title']} (attempt {attempts + 1})")
+                    
+                    video_info['status'] = 'pending'  # Reset to pending for retry
+                    video_info['last_attempt_time'] = datetime.now()
+                    retry_count += 1
+                
+            except Exception as e:
+                self.logger.error(f"Error during retry setup: {e}")
+        
+        # Save the updated queue
+        self.save_upload_queue()
+        
+        self.logger.info(f"Set up {retry_count} videos for retry")
+        return retry_count
+
 def show_menu():
     """Display the main menu options"""
     print("\nYouTube Shorts Automation")
@@ -645,8 +847,8 @@ def main():
             
         elif choice == '2':
             script = input("Enter script (use — pause — to separate videos): ")
-            voice = input("Enter voice (nova/alloy/echo/fable/onyx/shimmer) [nova]: ") or "nova"
-            speed = float(input("Enter speed (0.25-4.0) [1.0]: ") or "1.0")
+            voice = input("Enter voice (nova/alloy/echo/fable/onyx/shimmer) [onyx]: ") or "onyx"
+            speed = float(input("Enter speed (0.25-4.0) [1.2]: ") or "1.2")
             
             # Get video type
             print("\nVideo Type Options:")

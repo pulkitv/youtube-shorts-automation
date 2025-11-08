@@ -1,22 +1,77 @@
+import os
 import requests
 import time
 import zipfile
-import os
 import logging
 from typing import Optional, Dict, List
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 class PDFAPIClient:
     """Client for interacting with the PDF processing API to generate YouTube Shorts"""
     
     def __init__(self, base_url: str, endpoint: str):
+        """
+        Initialize the PDF API client
+        
+        Args:
+            base_url: Base URL of the API
+            endpoint: Endpoint for shorts generation
+        """
         self.base_url = base_url.rstrip('/')
         self.endpoint = endpoint
         self.logger = logging.getLogger(__name__)
+        
+        # Load timeout values from environment variables
+        self.request_timeout = int(os.getenv('API_REQUEST_TIMEOUT', '900'))  # 15 minutes default
+        self.status_timeout = int(os.getenv('API_STATUS_TIMEOUT', '30'))     # 30 seconds default
+        self.download_timeout = int(os.getenv('API_DOWNLOAD_TIMEOUT', '1200'))  # 20 minutes default
+        
+        # Maximum time to wait for video generation to complete
+        self.max_wait_time = self.request_timeout  # Use same as request timeout
+        
         # Add flag for testing mode
         self.testing_mode = os.getenv('API_TESTING_MODE', 'false').lower() == 'true'
+        
+        # Initialize mock session tracking
+        if self.testing_mode:
+            self.mock_sessions = {}
+            
+        self.logger.info(f"PDF API Client initialized with timeouts: request={self.request_timeout}s, status={self.status_timeout}s, download={self.download_timeout}s, max_wait={self.max_wait_time}s")
+
+    def _count_script_segments(self, script: str) -> int:
+        """Count the number of video segments in the script"""
+        if not script.strip():
+            return 0
+        # Count segments by splitting on "— pause —" and adding 1
+        return len(script.split("— pause —"))
     
+    def _split_script_into_segments(self, script: str) -> List[str]:
+        """Split script into individual segments"""
+        if not script.strip():
+            return []
+        segments = [segment.strip() for segment in script.split("— pause —")]
+        return [seg for seg in segments if seg]  # Remove empty segments
+    
+    def _extract_company_name(self, segment: str) -> str:
+        """Extract company name from a script segment"""
+        # Look for the pattern "Company Name as on Date"
+        lines = segment.split('\n')
+        if lines:
+            first_line = lines[0].strip()
+            # Extract text before " as on "
+            if " as on " in first_line:
+                company_name = first_line.split(" as on ")[0].strip()
+                return company_name
+            # Fallback: use first few words
+            words = first_line.split()[:3]
+            return "_".join(words)
+        return f"Company_{len(segment)}"
+
     def generate_shorts(self, 
                        script: str,
                        voice: str = "nova",
@@ -40,12 +95,16 @@ class PDFAPIClient:
         if not hasattr(self, '_session_start_times'):
             self._session_start_times = {}
         
+        # Store script for testing mode
+        self._current_script = script
+        
         # Testing mode - simulate successful API response
         if self.testing_mode:
             import uuid
             session_id = f"mock_{uuid.uuid4()}"
             self._session_start_times[session_id] = time.time()
-            self.logger.info(f"🧪 Testing mode: Simulating API call for session {session_id}")
+            video_count = self._count_script_segments(script)
+            self.logger.info(f"🧪 Testing mode: Simulating API call for session {session_id} with {video_count} videos")
             return {
                 "success": True,
                 "session_id": session_id,
@@ -65,28 +124,43 @@ class PDFAPIClient:
         if webhook_url:
             payload["webhook_url"] = webhook_url
         
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
         try:
             self.logger.info(f"Requesting shorts generation for script: {script[:100]}...")
-            response = requests.post(url, json=payload, timeout=30)
             
-            if response.status_code == 202:
-                data = response.json()
-                session_id = data.get('session_id')
-                if session_id:
-                    self._session_start_times[session_id] = time.time()
-                self.logger.info(f"Shorts generation started. Session ID: {session_id}")
-                return data
-            else:
-                self.logger.error(f"API request failed: {response.status_code} - {response.text}")
+            response = requests.post(
+                url, 
+                json=payload, 
+                headers=headers,
+                timeout=self.request_timeout  # ✅ Use configured timeout
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            session_id = result.get('session_id')
+            
+            if not session_id:
+                self.logger.error("No session_id in API response")
                 return None
-                
+            
+            self.logger.info(f"Shorts generation started. Session ID: {session_id}")
+            
+            # Wait for completion with configured timeout
+            return self._wait_for_completion(session_id)
+            
+        except requests.exceptions.Timeout:
+            self.logger.error(f"Request timeout after {self.request_timeout} seconds")
+            return None
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Failed to connect to API: {e}")
+            self.logger.error(f"API request failed: {e}")
             return None
         except Exception as e:
             self.logger.error(f"Unexpected error: {e}")
             return None
-    
+
     def check_status(self, session_id: str) -> Optional[Dict]:
         """
         Check the status of a shorts generation request
@@ -99,6 +173,10 @@ class PDFAPIClient:
         """
         # Testing mode - simulate status progression
         if self.testing_mode and session_id.startswith("mock_"):
+            # Get the actual script and count segments
+            script = self._current_script
+            video_count = self._count_script_segments(script) if script else 3
+            
             # Simulate different stages based on time
             import uuid
             current_time = time.time()
@@ -113,7 +191,7 @@ class PDFAPIClient:
                         "session_id": session_id,
                         "status": "processing",
                         "progress": 25,
-                        "message": "Generating video 1 of 3..."
+                        "message": f"Generating video 1 of {video_count}..."
                     }
                 elif elapsed < 10:
                     return {
@@ -121,7 +199,7 @@ class PDFAPIClient:
                         "session_id": session_id,
                         "status": "processing", 
                         "progress": 75,
-                        "message": "Generating video 3 of 3..."
+                        "message": f"Generating video {video_count} of {video_count}..."
                     }
                 else:
                     return {
@@ -129,7 +207,7 @@ class PDFAPIClient:
                         "session_id": session_id,
                         "status": "completed",
                         "progress": 100,
-                        "message": "All videos generated successfully!",
+                        "message": f"All {video_count} videos generated successfully!",
                         "zip_url": f"http://localhost:5000/mock-download/{session_id}.zip"
                     }
             except:
@@ -139,51 +217,29 @@ class PDFAPIClient:
                     "session_id": session_id,
                     "status": "completed",
                     "progress": 100,
-                    "message": "All videos generated successfully!",
+                    "message": f"All {video_count} videos generated successfully!",
                     "zip_url": f"http://localhost:5000/mock-download/{session_id}.zip"
                 }
         
-        url = f"{self.base_url}/api/v1/shorts-status/{session_id}"
+        # Real API mode
+        url = f"{self.base_url}/api/v1/shorts/status/{session_id}"
+        headers = {'Content-Type': 'application/json'}
         
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(
+                url, 
+                headers=headers,
+                timeout=self.status_timeout  # ✅ Use configured status timeout (30s)
+            )
+            response.raise_for_status()
             
-            if response.status_code == 200:
-                status_data = response.json()
-                
-                # WORKAROUND: If API is stuck at 0% but we know it's working,
-                # check if enough time has passed and assume completion
-                if (status_data.get('progress', 0) == 0 and 
-                    'Starting generation' in status_data.get('message', '') and
-                    hasattr(self, '_session_start_times')):
-                    
-                    session_start = self._session_start_times.get(session_id, time.time())
-                    elapsed = time.time() - session_start
-                    
-                    # If more than 30 seconds have passed, try to find download URL
-                    if elapsed > 30:
-                        self.logger.warning(f"API stuck at 0% for {elapsed:.0f}s, checking for completed files...")
-                        zip_url = self._try_find_download_url(session_id)
-                        if zip_url:
-                            self.logger.info(f"Found download URL despite stuck status: {zip_url}")
-                            return {
-                                "success": True,
-                                "session_id": session_id,
-                                "status": "completed",
-                                "progress": 100,
-                                "message": "Generation completed (auto-detected)",
-                                "zip_url": zip_url
-                            }
-                        else:
-                            self.logger.warning(f"No download URL found after {elapsed:.0f}s")
-                
-                return status_data
-            else:
-                self.logger.error(f"Status check failed: {response.status_code} - {response.text}")
-                return None
-                
+            return response.json()
+            
+        except requests.exceptions.Timeout:
+            self.logger.error(f"Status check timeout after {self.status_timeout} seconds")
+            return None
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"Failed to check status: {e}")
+            self.logger.error(f"Status check failed: {e}")
             return None
 
     def _try_find_download_url(self, session_id: str) -> Optional[str]:
@@ -268,66 +324,71 @@ class PDFAPIClient:
             self.logger.error(f"Error finding download URL: {e}")
             return None
     
-    def wait_for_completion(self, session_id: str, max_wait_time: int = 600, poll_interval: int = 10) -> Optional[Dict]:
+    def _wait_for_completion(self, session_id: str, poll_interval: int = 5) -> Optional[Dict]:
         """
-        Wait for shorts generation to complete
+        Poll the API until video generation is complete or timeout
         
         Args:
-            session_id: Session ID to monitor
-            max_wait_time: Maximum time to wait in seconds (default: 10 minutes)
-            poll_interval: How often to check status in seconds (default: 10 seconds)
+            session_id: Session ID to check
+            poll_interval: Seconds between status checks (default: 5)
             
         Returns:
-            Final status dict with zip_url, None if failed or timeout
+            Final status dict or None if failed/timeout
         """
         start_time = time.time()
         
-        while time.time() - start_time < max_wait_time:
+        self.logger.info(f"Waiting for completion (max {self.max_wait_time}s)...")
+        
+        while True:
+            elapsed = time.time() - start_time
+            
+            # Check if we've exceeded max wait time
+            if elapsed > self.max_wait_time:
+                self.logger.error(f"Timeout waiting for completion after {self.max_wait_time} seconds")
+                return None
+            
+            # Check status
             status = self.check_status(session_id)
             
             if not status:
+                self.logger.error("Failed to check status")
                 return None
             
-            current_status = status.get('status')
+            # Log progress
             progress = status.get('progress', 0)
-            message = status.get('message', '')
+            message = status.get('message', 'Processing...')
+            self.logger.info(f"Progress: {progress}% - {message} (elapsed: {int(elapsed)}s / {self.max_wait_time}s)")
             
-            self.logger.info(f"Progress: {progress}% - {message}")
-            
-            if current_status == 'completed':
-                self.logger.info("Shorts generation completed successfully!")
+            # Check if completed
+            if status.get('status') == 'completed':
+                self.logger.info("Video generation completed successfully!")
                 return status
-            elif current_status == 'failed':
+            
+            # Check if failed
+            if status.get('status') == 'failed':
                 error = status.get('error', 'Unknown error')
-                self.logger.error(f"Shorts generation failed: {error}")
+                self.logger.error(f"Video generation failed: {error}")
                 return None
             
+            # Wait before next poll
             time.sleep(poll_interval)
-        
-        self.logger.error(f"Timeout waiting for completion after {max_wait_time} seconds")
-        return None
 
-    def create_mock_videos(self, session_id: str, download_folder: str) -> List[str]:
+    def create_mock_videos(self, script: str, output_dir: str) -> List[str]:
         """Create mock video files for testing"""
-        self.logger.info("🎬 Creating mock video files for testing...")
-        
-        # Create mock MP4 files
         video_files = []
-        extract_folder = os.path.join(download_folder, f"extracted_mock_{int(time.time())}")
-        os.makedirs(extract_folder, exist_ok=True)
+        segments = self._split_script_into_segments(script)
         
-        for i in range(3):  # Create 3 mock videos
-            filename = f"short_video_{i+1}.mp4"
-            video_path = os.path.join(extract_folder, filename)
+        for i, segment in enumerate(segments):
+            company_name = self._extract_company_name(segment)
+            filename = f"api_{company_name.replace(' ', '_')}.mp4"
+            filepath = os.path.join(output_dir, filename)
             
-            # Create a minimal MP4 file (this won't actually play, but will test the upload logic)
-            with open(video_path, 'wb') as f:
-                # Write minimal MP4 header bytes
-                f.write(b'\x00\x00\x00\x20ftypmp41\x00\x00\x00\x00mp41isom')
-                f.write(b'\x00' * 1024)  # Pad to make it a reasonable size
+            # Create a dummy video file
+            with open(filepath, 'wb') as f:
+                f.write(b'fake video content for testing')
             
-            video_files.append(video_path)
-            self.logger.info(f"Created mock video: {filename}")
+            video_files.append(filepath)
+            print(f"✅ Created mock video {i+1}/{len(segments)}: {filename}")
         
         return video_files
 
@@ -360,7 +421,7 @@ class PDFAPIClient:
             # Ensure download directory exists
             os.makedirs(os.path.dirname(download_path), exist_ok=True)
             
-            response = requests.get(zip_url, stream=True, timeout=60)
+            response = requests.get(zip_url, stream=True, timeout=self.download_timeout)  # ✅ Use download timeout from environment
             response.raise_for_status()
             
             with open(download_path, 'wb') as f:
@@ -445,7 +506,7 @@ class PDFAPIClient:
             return []
         
         # Wait for completion
-        final_status = self.wait_for_completion(session_id)
+        final_status = self._wait_for_completion(session_id)
         if not final_status:
             return []
         
@@ -475,286 +536,82 @@ class PDFAPIClient:
         
         return video_files
 
-
-class RegularVoiceoverAPIClient:
-    """Client for interacting with the Regular Format Voiceover API to generate YouTube Posts"""
-    
-    def __init__(self, base_url: str):
-        self.base_url = base_url.rstrip('/')
-        self.logger = logging.getLogger(__name__)
-        # Add flag for testing mode
-        self.testing_mode = os.getenv('API_TESTING_MODE', 'false').lower() == 'true'
-    
-    def generate_voiceover(self, 
-                          script: str,
-                          voice: str = "nova",
-                          speed: float = 1.0,
-                          format_type: str = "mp4",
-                          background_image_url: Optional[str] = None,
-                          webhook_url: Optional[str] = None) -> Optional[Dict]:
+    def download_video(self, download_url: str, output_path: str) -> bool:
         """
-        Generate regular format voiceover from script (landscape video for YouTube posts)
+        Download a video file from the API
         
         Args:
-            script: Text content to convert to voiceover (no pause markers needed)
-            voice: Voice type (nova, alloy, echo, fable, onyx, shimmer)
-            speed: Speech speed between 0.25 and 4.0
-            format_type: Output format (mp3, wav, mp4)
-            background_image_url: Optional background image URL
-            webhook_url: Optional webhook URL for completion notification
-            
-        Returns:
-            Response dict with session_id and status, None if failed
-        """
-        # Initialize session tracking
-        if not hasattr(self, '_session_start_times'):
-            self._session_start_times = {}
-        
-        # Testing mode - simulate successful API response
-        if self.testing_mode:
-            import uuid
-            session_id = f"voiceover_mock_{uuid.uuid4()}"
-            self._session_start_times[session_id] = time.time()
-            self.logger.info(f"🧪 Testing mode: Simulating voiceover API call for session {session_id}")
-            return {
-                "success": True,
-                "session_id": session_id,
-                "message": "Voiceover generation started",
-                "status_url": f"/api/v1/voiceover/status/{session_id}"
-            }
-        
-        url = f"{self.base_url}/api/v1/voiceover/generate"
-        
-        payload = {
-            "script": script,
-            "voice": voice,
-            "speed": speed,
-            "format": format_type
-        }
-        
-        if background_image_url:
-            payload["background_image_url"] = background_image_url
-        if webhook_url:
-            payload["webhook_url"] = webhook_url
-        
-        try:
-            self.logger.info(f"Requesting voiceover generation for script: {script[:100]}...")
-            response = requests.post(url, json=payload, timeout=30)
-            
-            if response.status_code == 202:
-                data = response.json()
-                session_id = data.get('session_id')
-                if session_id:
-                    self._session_start_times[session_id] = time.time()
-                self.logger.info(f"Voiceover generation started. Session ID: {session_id}")
-                return data
-            else:
-                self.logger.error(f"API request failed: {response.status_code} - {response.text}")
-                return None
-                
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Failed to connect to voiceover API: {e}")
-            return None
-        except Exception as e:
-            self.logger.error(f"Unexpected error: {e}")
-            return None
-    
-    def check_status(self, session_id: str) -> Optional[Dict]:
-        """
-        Check the status of a voiceover generation request
-        
-        Args:
-            session_id: Session ID from the generation request
-            
-        Returns:
-            Status dict with progress info, None if failed
-        """
-        # Testing mode - simulate status progression
-        if self.testing_mode and session_id.startswith("voiceover_mock_"):
-            current_time = time.time()
-            session_start = current_time - 15  # Assume started 15 seconds ago for testing
-            elapsed = current_time - session_start
-            
-            if elapsed < 5:
-                return {
-                    "session_id": session_id,
-                    "status": "processing",
-                    "progress": 30,
-                    "message": "Generating audio from text..."
-                }
-            elif elapsed < 10:
-                return {
-                    "session_id": session_id,
-                    "status": "processing", 
-                    "progress": 70,
-                    "message": "Creating video with waveform..."
-                }
-            else:
-                return {
-                    "session_id": session_id,
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Voiceover generation completed successfully!",
-                    "result": {
-                        "file_url": f"https://mock-domain.com/download-voiceover/mock_video_{session_id}.mp4",
-                        "filename": f"mock_video_{session_id}.mp4",
-                        "duration": 45.6,
-                        "format": "mp4",
-                        "file_size": "12.8 MB"
-                    }
-                }
-        
-        url = f"{self.base_url}/api/v1/voiceover/status/{session_id}"
-        
-        try:
-            response = requests.get(url, timeout=10)
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                self.logger.error(f"Status check failed: {response.status_code} - {response.text}")
-                return None
-                
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Failed to check voiceover status: {e}")
-            return None
-    
-    def wait_for_completion(self, session_id: str, max_wait_time: int = 300, poll_interval: int = 5) -> Optional[Dict]:
-        """
-        Wait for voiceover generation to complete
-        
-        Args:
-            session_id: Session ID to monitor
-            max_wait_time: Maximum time to wait in seconds (default: 5 minutes)
-            poll_interval: How often to check status in seconds (default: 5 seconds)
-            
-        Returns:
-            Final status dict with result, None if failed or timeout
-        """
-        start_time = time.time()
-        
-        while time.time() - start_time < max_wait_time:
-            status = self.check_status(session_id)
-            
-            if not status:
-                return None
-            
-            current_status = status.get('status')
-            progress = status.get('progress', 0)
-            message = status.get('message', '')
-            
-            self.logger.info(f"Voiceover Progress: {progress}% - {message}")
-            
-            if current_status == 'completed':
-                self.logger.info("Voiceover generation completed successfully!")
-                return status
-            elif current_status == 'failed':
-                error = status.get('error', 'Unknown error')
-                self.logger.error(f"Voiceover generation failed: {error}")
-                return None
-            
-            time.sleep(poll_interval)
-        
-        self.logger.error(f"Timeout waiting for voiceover completion after {max_wait_time} seconds")
-        return None
-    
-    def download_file(self, session_id: str, download_path: str) -> bool:
-        """
-        Download the generated voiceover file directly
-        
-        Args:
-            session_id: Session ID of the completed generation
-            download_path: Local path to save the file
+            download_url: URL to download the video from
+            output_path: Local path to save the video
             
         Returns:
             True if successful, False otherwise
         """
-        # Testing mode - simulate download
-        if self.testing_mode and "voiceover_mock_" in session_id:
-            self.logger.info("🧪 Testing mode: Simulating voiceover file download...")
-            os.makedirs(os.path.dirname(download_path), exist_ok=True)
-            
-            # Create a mock MP4 file
-            with open(download_path, 'wb') as f:
-                # Write minimal MP4 header
-                f.write(b'\x00\x00\x00\x20ftypmp41\x00\x00\x00\x00mp41isom')
-                f.write(b'\x00' * 2048)  # Larger mock file for posts
-            
-            return True
-        
-        url = f"{self.base_url}/api/v1/voiceover/download/{session_id}"
-        
         try:
-            self.logger.info(f"Downloading voiceover file from: {url}")
+            self.logger.info(f"Downloading video from: {download_url}")
             
-            # Ensure download directory exists
-            os.makedirs(os.path.dirname(download_path), exist_ok=True)
+            headers = {'Content-Type': 'application/json'}
             
-            response = requests.get(url, stream=True, timeout=60)
+            # Use tuple timeout: (connection timeout, read timeout)
+            # Connection: 30s, Read: configured download timeout
+            response = requests.get(
+                download_url, 
+                headers=headers, 
+                stream=True,
+                timeout=(30, self.download_timeout)  # ✅ Use configured download timeout
+            )
             response.raise_for_status()
             
-            with open(download_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
+            # Download with progress tracking
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
             
-            self.logger.info(f"Voiceover file downloaded successfully: {download_path}")
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # Log progress for large files
+                        if total_size > 0:
+                            progress = (downloaded / total_size) * 100
+                            if int(progress) % 10 == 0:  # Log every 10%
+                                self.logger.info(f"Download progress: {progress:.1f}%")
+            
+            self.logger.info(f"Video downloaded successfully to: {output_path}")
             return True
             
-        except Exception as e:
-            self.logger.error(f"Failed to download voiceover file: {e}")
+        except requests.exceptions.Timeout:
+            self.logger.error(f"Download timeout after {self.download_timeout} seconds")
             return False
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Download failed: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error during download: {e}")
+            return False
+
+class RegularVoiceoverAPIClient:
+    """Client for generating regular format voiceover videos (landscape)"""
     
-    def generate_and_download_video(self, 
-                                   script: str,
-                                   download_folder: str,
-                                   voice: str = "nova",
-                                   speed: float = 1.0,
-                                   background_image_url: Optional[str] = None) -> Optional[str]:
+    def __init__(self, base_url: str):
         """
-        Complete workflow: generate voiceover, wait for completion, download video file
+        Initialize the Regular Format Voiceover API client
         
         Args:
-            script: Text content to convert to voiceover (no pause markers)
-            download_folder: Folder to download the video file
-            voice: Voice type
-            speed: Speech speed
-            background_image_url: Optional background image
-            
-        Returns:
-            Path to downloaded video file, None if failed
+            base_url: Base URL of the API
         """
-        # Start generation
-        response = self.generate_voiceover(script, voice, speed, "mp4", background_image_url)
-        if not response:
-            return None
+        self.base_url = base_url.rstrip('/')
+        self.endpoint = '/api/v1/voiceover/generate'
+        self.logger = logging.getLogger(__name__)
         
-        session_id = response.get('session_id')
-        if not session_id:
-            return None
+        # Load timeout values from environment variables
+        self.request_timeout = int(os.getenv('API_REQUEST_TIMEOUT', '900'))
+        self.status_timeout = int(os.getenv('API_STATUS_TIMEOUT', '30'))
+        self.download_timeout = int(os.getenv('API_DOWNLOAD_TIMEOUT', '1200'))
+        self.max_wait_time = self.request_timeout
         
-        # Wait for completion
-        final_status = self.wait_for_completion(session_id)
-        if not final_status:
-            return None
+        # Add flag for testing mode
+        self.testing_mode = os.getenv('API_TESTING_MODE', 'false').lower() == 'true'
         
-        result = final_status.get('result')
-        if not result:
-            self.logger.error("No result in completed voiceover response")
-            return None
-        
-        # Generate filename based on script content
-        script_words = script.split()[:5]  # First 5 words
-        safe_filename = "_".join(word.strip(".,!?;:") for word in script_words if word.isalnum())
-        safe_filename = safe_filename[:50]  # Limit length
-        
-        if not safe_filename:
-            safe_filename = f"voiceover_{int(time.time())}"
-        
-        video_filename = f"{safe_filename}.mp4"
-        video_path = os.path.join(download_folder, video_filename)
-        
-        # Download the video file
-        if self.download_file(session_id, video_path):
-            return video_path
-        else:
-            return None
+        self.logger.info(f"Voiceover API Client initialized with timeouts: request={self.request_timeout}s, status={self.status_timeout}s, download={self.download_timeout}s")
