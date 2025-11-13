@@ -4,55 +4,59 @@ Script file for long market analysis content
 """
 
 MARKET_SCRIPT = """
-Reliance Industries as on 08 November 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. Data based on public sources; please verify with company filings.
-On 30 October 2025, Jio announced a partnership with Google to bundle Google AI Pro for eligible users, starting with the 18–25 age group on select unlimited 5G plans and then expanding nationwide. Such effects typically appear in operating metrics after a few quarters; practical visibility could begin from Q3–Q4 FY26. Viewers should track subscriber additions, ARPU trends, 5G usage per user, and any disclosure on paid conversion after bundled access. Risks include evolving rules around AI and data privacy, changes to third-party license costs, and competitive responses in Indian telecom that may influence pricing. This summary  does not add projections beyond what companies have stated.
-About the company: Reliance Industries operates telecom (Jio), retail and energy businesses at national scale. Large cap.
+Eicher Motors Ltd (Royal Enfield) as on November 12, 2025
+Disclaimer: Educational content only. Not investment advice or recommendation. 
+On November 4–5, 2025 at EICMA (Milan), Royal Enfield showcased multiple motorcycles: Bullet 650, Classic 650, Himalayan 450 Mana Black edition, a 125th Anniversary Special, Shotgun 650 limited edition, and the Flying Flea Scrambler. These are global reveals; market launches will roll out by model and region. The company has not provided a quantified forecast for revenue or profit uplift from these introductions. A practical window for initial financial visibility is the March 2026 quarter and beyond. About the company: Parent of Royal Enfield; large cap two-wheeler OEM.
+Subscribe for more company news daily.
+
+— pause —
+Waaree Energies Ltd as on November 12, 2025
+Disclaimer: Educational content only. Not investment advice or recommendation. 
+On November 11, 2025, Waaree Energies disclosed a domestic order to supply 360 MW of solar photovoltaic modules, to be delivered during FY26. The filing did not disclose the rupee value of the order. Based on the stated fulfillment period, the impact should phase through the December 2025 and March 2026 quarters, and may extend depending on the delivery calendar finalized with the customer. About the company: Solar PV manufacturer and EPC participant; generally mid cap.
 Subscribe for more company news daily.
 
 — pause —
 
-State Bank of India as on 08 November 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. Data based on public sources; please verify with company filings.
-On 02 November 2025, SBI disclosed it executed its first bullion trade as a Special Category Client on the India International Bullion Exchange (IIBX). This adds a new market-access capability rather than a discrete revenue order. earnings effects, if any, would depend on transaction volumes, spreads and fees, and may appear gradually from Q3 FY26 as activity scales. Separately, on 07 November 2025, SBI approved steps toward an IPO of SBI Funds Management with a planned stake sale of about 6.3% in 2026, subject to approvals and market conditions. Investors should monitor regulatory filings for risk disclosures, segment commentary, and updates on the AMC IPO. Key risks include commodity price volatility, regulatory changes at IIBX, and market liquidity in bullion settlement. About the company: SBI is India’s largest commercial bank by assets, deposits and branch network. 
+VA Tech Wabag Ltd as on November 12, 2025
+Disclaimer: Educational content only. Not investment advice or recommendation.
+On November 7, 2025, the company shared a Q2 FY26 update indicating order intake of about ₹35,000 crore in H1 FY26 and a closing order book of roughly ₹160,000 crore, including preferred-bidder status in large water and wastewater projects. This communication is an order book and intake update rather than a single new order within the period. Execution in this sector usually spans 18–36 months, with milestones, performance guarantees, and operations & maintenance components. Revenue recognition will be phased across FY26 to FY28 based on project progress. About the company: Specialist in water treatment EPC and long-term O&M; mid cap.
 Subscribe for more company news daily.
 
 — pause —
 
-IRB Infrastructure Developers Ltd as on 08 November 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. Data based on public sources; please verify with company filings.
-On 06 November 2025, IRB InvIT Fund, sponsored by IRB Infra, completed acquisition of three highway assets with an enterprise value of ₹8,436 crore. Around 29 October 2025, trade media also reported a ₹4,466 crore project-management and services arrangement across IRB platforms. Using IRB Infra’s FY2024–25 consolidated revenue of about ₹7,859 crore as context, the reported services value equals roughly 57% of one year’s revenue but would be recognized over the management period, not upfront. Investors should review InvIT disclosures and IRB Infra commentary for timing, fee structures, O&M obligations and any performance-linked components. About the company: IRB Infra develops and operates toll road assets in India and sponsors a listed infrastructure investment trust. Mid cap.
+Amara Raja Energy & Mobility Ltd as on November 12, 2025
+Disclaimer: Educational content only. Not investment advice or recommendation. 
+On November 6, 2025, the company announced “Amaron Pitstops” openings in Qatar and Morocco, expanding its international retail and service footprint. This is a network and service expansion. Initial financial impact is often modest and may become visible after several quarters as the network scales and repeat customers grow. About the company: Batteries and energy-solutions manufacturer from India; mid cap.
 Subscribe for more company news daily.
 
 — pause —
 
-BCPL Railway Infrastructure Ltd as on 08 November 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. Data based on public sources; please verify with company filings.
-On 29 October 2025, BCPL announced combined orders totaling about ₹41.245 crore from Rail Vikas Nigam and Eastern Railway. Size versus last reported yearly revenue: FY2024–25 consolidated revenue was around ₹161 crore; the new orders equal roughly 25.6% of annual revenue, which is material for a small cap. Execution for railway electrification and related works typically follows milestone billing; initial recognition could begin in Q4 FY26, with significant realization during FY26–FY27. Stakeholders should watch subsequent updates for scope changes, payment schedules and mobilization progress. About the company: BCPL undertakes railway electrification and related EPC contracts for railways and public-sector clients across India. Small cap.
+INOX India Ltd as on November 12, 2025
+Disclaimer: Educational content only. Not investment advice or recommendation. 
+In its Q2/H1 FY26 update on November 5, 2025, INOX India highlighted fresh international orders, including refurbishment work for ITER’s Vacuum Vessel Thermal Shield and a 90-kilolitre liquid hydrogen storage tank for a European semiconductor facility. The company did not disclose individual order values. Revenue recognition should phase through the December 2025 and March 2026 quarters and can extend into FY27 depending on project schedules and customer readiness. About the company: Cryogenic equipment manufacturer serving LNG, hydrogen, and scientific markets; mid cap.
 Subscribe for more company news daily.
 
 — pause —
 
-Supreme Power Equipment Ltd as on 08 November 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. Data based on public sources; please verify with company filings.
-On 28 October 2025, Supreme Power disclosed a domestic order of ₹4.86 crore for two 20 MVA, 66/11 kV power transformers from an EPC client in Bengaluru. The filing indicates an execution tenor of roughly eight months, implying dispatch and recognition across Q3–Q4 FY26 and possibly into Q1 FY27 for acceptance and warranty. FY2024–25 consolidated revenue was about ₹149.5 crore; the order equals around 3.2% of that base. Transformer contracts usually involve advances, factory acceptance tests, site commissioning and warranty obligations. This summary avoids adding projections not provided by the company.
-About the company: Supreme Power manufactures distribution and power transformers for utilities, infrastructure EPCs and industrial clients. Small cap.
+Zen Technologies Ltd as on November 12, 2025
+Disclaimer: Educational content only. Not investment advice or recommendation. 
+On November 1–3, 2025, Zen Technologies announced two Ministry of Defence orders totaling ₹289 crore to upgrade Anti-Drone Systems, with an execution timeline of about one year. Compared to the company’s FY25 revenue of over ₹900 crore, these new orders amount to roughly 32% of last year’s revenue. Execution and revenue recognition are expected to begin in the December 2025 quarter and continue through FY27, based on typical hardware delivery, testing, and acceptance cycles. The company’s Q2 FY26 update showed softer year-on-year revenue but resilient margins; these orders add visibility for the next few quarters. About the company: Defence simulation and counter-drone systems maker; generally small–mid cap.
 Subscribe for more company news daily.
 
 — pause —
 
-ITC Hotels Ltd as on 08 November 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. Data based on public sources; please verify with company filings.
-On 27 October 2025, ITC Hotels launched a new premium brand named Epiq Collection – Member ITC Hotels’ Group, with first hotels planned in Odisha and Andhra Pradesh. This is a brand-portfolio expansion rather than a single property opening, so financial impact depends on hotel signings, opening timelines following launch. Management has not issued percentage guidance on revenue or profit tied to Epiq. Investors should track keys added to pipeline, nature of agreements, fee structures, pre-opening costs and announced opening dates. This update does not extrapolate beyond company statements.
-About the company: ITC Hotels Ltd is the separately listed hospitality arm of the ITC Group, operating managed and owned properties across India. Mid cap.
+Skipper Ltd as on November 12, 2025
+Disclaimer: Educational content only. Not investment advice or recommendation. 
+On November 7, 2025, Skipper reported its highest-ever closing order book at ₹8,820 crore as of September 30, 2025, with second-quarter inflows of ₹1,243 crore, including 765 kV transmission line wins in Rajasthan and Madhya Pradesh. Revenue recognition should spread across the December 2025 and March 2026 quarters and continue into FY27. About the company: Manufacturer of power transmission structures and EPC contractor; small cap.
 Subscribe for more company news daily.
 
 — pause —
 
-CMS Info Systems Ltd as on 08 November 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. Data based on public sources; please verify with company filings.
-CMS progressed the acquisition of Securens Systems. On 28 October 2025, the company disclosed its stake rose to about 75.78 percent via a rights issue; on 05 November 2025, the Q2 FY26 presentation stated that the Securens acquisition was completed. Earlier milestones included board approval on 23 July 2025, initial majority stake completion on 16 September 2025 and additional shares acquired on 08 October 2025. The company has not provided quantified guidance for revenue or profit accretion from Securens. Any impact will depend on cross-selling, retention of installed sites, and technology platform leverage. Watch upcoming quarters for consolidated segment reporting, margin movement, synergy execution and capex. About the company: CMS Info Systems provides cash logistics, ATM managed services and retail technology solutions across India. Mid cap.
+Saregama India Ltd as on November 12, 2025
+Disclaimer: Educational content only. Not investment advice or recommendation. 
+On November 5, 2025, Saregama disclosed that its material subsidiary Pocket Aces Pictures Pvt Ltd entered an agreement on September 25, 2025 to acquire 100% of Finnet Media Pvt Ltd, a digital entertainment company. A practical window for completion could be during the December 2025 or March 2026 quarters, subject to approvals and final documentation. About the company: Music label and content studio with growing digital portfolio; small–mid cap.
 Subscribe for more company news daily.
+
 
 """
 if __name__ == "__main__":

@@ -149,7 +149,18 @@ class PDFAPIClient:
             self.logger.info(f"Shorts generation started. Session ID: {session_id}")
             
             # Wait for completion with configured timeout
-            return self._wait_for_completion(session_id)
+            completion_status = self._wait_for_completion(session_id)
+            
+            if not completion_status:
+                self.logger.error("Failed to complete video generation")
+                return None
+            
+            # Return the completion status but ensure session_id is included
+            # The status response should include session_id, but let's make sure
+            if 'session_id' not in completion_status:
+                completion_status['session_id'] = session_id
+            
+            return completion_status
             
         except requests.exceptions.Timeout:
             self.logger.error(f"Request timeout after {self.request_timeout} seconds")
@@ -499,21 +510,31 @@ class PDFAPIClient:
         # Start generation
         response = self.generate_shorts(script, voice, speed, background_image_url)
         if not response:
+            self.logger.error("Failed to start video generation")
             return []
         
         session_id = response.get('session_id')
         if not session_id:
+            self.logger.error("No session_id in response")
             return []
         
-        # Wait for completion
-        final_status = self._wait_for_completion(session_id)
-        if not final_status:
-            return []
+        self.logger.info(f"Video generation completed for session: {session_id}")
         
-        zip_url = final_status.get('zip_url')
+        # Try to get zip_url from response, if not present, try to find it
+        zip_url = response.get('zip_url')
         if not zip_url:
-            self.logger.error("No ZIP URL in completed response")
-            return []
+            self.logger.info("No zip_url in response, attempting to find download URL...")
+            zip_url = self._try_find_download_url(session_id)
+            
+            if not zip_url:
+                self.logger.error("Failed to find download URL for completed session")
+                self.logger.error("This might mean:")
+                self.logger.error("  1. The API completed but files aren't ready yet")
+                self.logger.error("  2. The download URL pattern has changed")
+                self.logger.error("  3. The files were deleted or moved")
+                return []
+        
+        self.logger.info(f"Found download URL: {zip_url}")
         
         # Download ZIP file
         timestamp = int(time.time())
@@ -521,11 +542,18 @@ class PDFAPIClient:
         zip_path = os.path.join(download_folder, zip_filename)
         
         if not self.download_zip(zip_url, zip_path):
+            self.logger.error("Failed to download ZIP file")
             return []
         
         # Extract videos
         extract_folder = os.path.join(download_folder, f"extracted_{timestamp}")
         video_files = self.extract_videos(zip_path, extract_folder)
+        
+        if not video_files:
+            self.logger.error("No videos extracted from ZIP file")
+            return []
+        
+        self.logger.info(f"Successfully extracted {len(video_files)} videos")
         
         # Clean up ZIP file after extraction
         try:
@@ -615,3 +643,166 @@ class RegularVoiceoverAPIClient:
         self.testing_mode = os.getenv('API_TESTING_MODE', 'false').lower() == 'true'
         
         self.logger.info(f"Voiceover API Client initialized with timeouts: request={self.request_timeout}s, status={self.status_timeout}s, download={self.download_timeout}s")
+    
+    def generate_voiceover(self, 
+                          script: str,
+                          voice: str = "onyx",
+                          speed: float = 1.2) -> Optional[Dict]:
+        """
+        Generate a regular format voiceover video (landscape)
+        
+        Args:
+            script: Text script for the voiceover (no pause markers needed)
+            voice: Voice type (alloy, echo, fable, onyx, nova, shimmer)
+            speed: Speech speed between 0.25 and 4.0
+            
+        Returns:
+            Response dict with download_url and status, None if failed
+        """
+        url = f"{self.base_url}{self.endpoint}"
+        
+        payload = {
+            "script": script,
+            "voice": voice,
+            "speed": speed
+        }
+        
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            self.logger.info(f"Requesting voiceover generation for script: {script[:100]}...")
+            
+            response = requests.post(
+                url, 
+                json=payload, 
+                headers=headers,
+                timeout=self.request_timeout
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            if not result.get('success'):
+                self.logger.error(f"Voiceover generation failed: {result.get('error', 'Unknown error')}")
+                return None
+            
+            download_url = result.get('download_url')
+            if not download_url:
+                self.logger.error("No download_url in API response")
+                return None
+            
+            self.logger.info(f"Voiceover generated successfully. Download URL: {download_url}")
+            return result
+            
+        except requests.exceptions.Timeout:
+            self.logger.error(f"Request timeout after {self.request_timeout} seconds")
+            return None
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"API request failed: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error: {e}")
+            return None
+    
+    def download_video(self, download_url: str, output_path: str) -> bool:
+        """
+        Download a video file from the API
+        
+        Args:
+            download_url: URL to download the video from
+            output_path: Local path to save the video
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            self.logger.info(f"Downloading video from: {download_url}")
+            
+            # Ensure download directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            response = requests.get(
+                download_url, 
+                stream=True,
+                timeout=(30, self.download_timeout)
+            )
+            response.raise_for_status()
+            
+            # Download with progress tracking
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # Log progress for large files
+                        if total_size > 0:
+                            progress = (downloaded / total_size) * 100
+                            if int(progress) % 10 == 0:
+                                self.logger.info(f"Download progress: {progress:.1f}%")
+            
+            self.logger.info(f"Video downloaded successfully to: {output_path}")
+            return True
+            
+        except requests.exceptions.Timeout:
+            self.logger.error(f"Download timeout after {self.download_timeout} seconds")
+            return False
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Download failed: {e}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error during download: {e}")
+            return False
+    
+    def generate_and_download_video(self,
+                                   script: str,
+                                   download_folder: str,
+                                   voice: str = "onyx",
+                                   speed: float = 1.2) -> Optional[str]:
+        """
+        Complete workflow: generate voiceover video and download it
+        
+        Args:
+            script: Text script for the voiceover
+            download_folder: Folder to download the video
+            voice: Voice type
+            speed: Speech speed
+            
+        Returns:
+            Path to downloaded video file, None if failed
+        """
+        # Generate voiceover
+        result = self.generate_voiceover(script, voice, speed)
+        if not result:
+            return None
+        
+        download_url = result.get('download_url')
+        if not download_url:
+            self.logger.error("No download URL in response")
+            return None
+        
+        # Construct the full download URL if it's a relative path
+        if download_url.startswith('/'):
+            download_url = f"{self.base_url}{download_url}"
+        
+        # Generate filename from script
+        timestamp = int(time.time())
+        # Use first few words of script for filename
+        script_words = script.split()[:5]
+        filename_base = "_".join(script_words).lower()
+        # Clean filename
+        filename_base = "".join(c if c.isalnum() or c == '_' else '_' for c in filename_base)
+        filename = f"api_{filename_base}_{timestamp}.mp4"
+        
+        output_path = os.path.join(download_folder, filename)
+        
+        # Download the video
+        if self.download_video(download_url, output_path):
+            return output_path
+        else:
+            return None
