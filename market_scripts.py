@@ -4,57 +4,46 @@ Script file for long market analysis content
 """
 
 MARKET_SCRIPT = """
-Eicher Motors Ltd (Royal Enfield) as on November 12, 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. 
-On November 4–5, 2025 at EICMA (Milan), Royal Enfield showcased multiple motorcycles: Bullet 650, Classic 650, Himalayan 450 Mana Black edition, a 125th Anniversary Special, Shotgun 650 limited edition, and the Flying Flea Scrambler. These are global reveals; market launches will roll out by model and region. The company has not provided a quantified forecast for revenue or profit uplift from these introductions. A practical window for initial financial visibility is the March 2026 quarter and beyond. About the company: Parent of Royal Enfield; large cap two-wheeler OEM.
-Subscribe for more company news daily.
 
-— pause —
-Waaree Energies Ltd as on November 12, 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. 
-On November 11, 2025, Waaree Energies disclosed a domestic order to supply 360 MW of solar photovoltaic modules, to be delivered during FY26. The filing did not disclose the rupee value of the order. Based on the stated fulfillment period, the impact should phase through the December 2025 and March 2026 quarters, and may extend depending on the delivery calendar finalized with the customer. About the company: Solar PV manufacturer and EPC participant; generally mid cap.
-Subscribe for more company news daily.
+Tata Steel Limited as on 15 November 2025
+Educational content only. Not investment advice or recommendation
 
-— pause —
+The news in focus is Tata Steel’s decision to fully acquire Tata BlueScope Steel Private Limited. On 12 November 2025, Tata Steel announced it will buy the remaining 50 percent stake from BlueScope Steel Asia for up to ₹1,100 crore, making Tata BlueScope its indirect wholly owned subsidiary. Tata Steel’s consolidated income from operations for FY 2024-25 was about ₹2,18,543 crore, while Tata BlueScope reported revenue of around ₹4,270 crore for the year ended March 2025. If we simply add the two revenue numbers, the combined figure would be roughly 2 percent higher than Tata Steel’s standalone FY 2024-25 revenue base. The company has indicated that the transaction is expected to close in about three to four months from the November announcement, which points to completion around the fourth quarter of FY 2025-26, subject to regulatory approvals. 
+About the company: Tata Steel Limited is one of India’s largest integrated steel producers with operations in India and overseas. <<Tata Steel Limited is a large cap company.>
 
-VA Tech Wabag Ltd as on November 12, 2025
-Disclaimer: Educational content only. Not investment advice or recommendation.
-On November 7, 2025, the company shared a Q2 FY26 update indicating order intake of about ₹35,000 crore in H1 FY26 and a closing order book of roughly ₹160,000 crore, including preferred-bidder status in large water and wastewater projects. This communication is an order book and intake update rather than a single new order within the period. Execution in this sector usually spans 18–36 months, with milestones, performance guarantees, and operations & maintenance components. Revenue recognition will be phased across FY26 to FY28 based on project progress. About the company: Specialist in water treatment EPC and long-term O&M; mid cap.
 Subscribe for more company news daily.
 
 — pause —
 
-Amara Raja Energy & Mobility Ltd as on November 12, 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. 
-On November 6, 2025, the company announced “Amaron Pitstops” openings in Qatar and Morocco, expanding its international retail and service footprint. This is a network and service expansion. Initial financial impact is often modest and may become visible after several quarters as the network scales and repeat customers grow. About the company: Batteries and energy-solutions manufacturer from India; mid cap.
+Foseco India Limited as on 15 November 2025
+Educational content only. Not investment advice or recommendation
+
+The news in focus is Foseco India’s acquisition of a majority stake in Morganite Crucible (India) Limited. The board first approved the deal on 22 August 2025, and an exchange filing on 2 November 2025 updated the long-stop date for completing the share purchase. Under this transaction, Foseco India is acquiring a 75 percent stake in Morganite Crucible through a share-swap arrangement valued at about ₹654 crore. Foseco India’s last reported full-year revenue is around ₹525 crore, while Morganite Crucible’s recent annual revenue is roughly ₹182 crore. Taken together, the combined revenue would be about 35 percent higher than Foseco India’s standalone revenue base. Closing of the share purchase has been targeted for around the end of October 2025, which falls in the third quarter of FY 2025-26. That means the merged financial picture is likely to appear from the fourth quarter of FY 2025-26, once consolidation of Morganite Crucible into Foseco India’s results begins.
+
+About the company: Foseco India Limited supplies foundry chemicals and consumables used in the metal casting industry. <<Foseco India Limited is a mid cap company.>
+
 Subscribe for more company news daily.
 
 — pause —
 
-INOX India Ltd as on November 12, 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. 
-In its Q2/H1 FY26 update on November 5, 2025, INOX India highlighted fresh international orders, including refurbishment work for ITER’s Vacuum Vessel Thermal Shield and a 90-kilolitre liquid hydrogen storage tank for a European semiconductor facility. The company did not disclose individual order values. Revenue recognition should phase through the December 2025 and March 2026 quarters and can extend into FY27 depending on project schedules and customer readiness. About the company: Cryogenic equipment manufacturer serving LNG, hydrogen, and scientific markets; mid cap.
+Mahindra & Mahindra Limited as on 15 November 2025
+Educational content only. Not investment advice or recommendation
+
+The news in focus is Mahindra & Mahindra expanding its motorsport presence by acquiring Mahindra Racing UK Limited. On 13 November 2025, M&M disclosed that its wholly owned subsidiary, Mahindra Overseas Investment Company (Mauritius) Limited, has agreed to buy the entire stake in Mahindra Racing UK from a Tech Mahindra group entity. Mahindra & Mahindra’s consolidated income from operations for FY 2024-25 stands at about ₹1,59,211 crore. Mahindra Racing UK, meanwhile, generated around ₹106 crore of revenue recently, as highlighted in Tech Mahindra’s disclosure. If we simply add Mahindra Racing UK’s revenue to M&M’s FY 2024-25 revenue base, the combined figure would be only about 0.1 percent higher, showing that this is strategically important but financially small at group level. The share purchase agreement targets completion by 31 December 2025, which falls in the third quarter of FY 2025-26. 
+
+About the company: Mahindra & Mahindra Limited is a diversified Indian group with strong positions in SUVs, tractors and other businesses. <<Mahindra & Mahindra Limited is a large cap company.>
+
 Subscribe for more company news daily.
 
 — pause —
 
-Zen Technologies Ltd as on November 12, 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. 
-On November 1–3, 2025, Zen Technologies announced two Ministry of Defence orders totaling ₹289 crore to upgrade Anti-Drone Systems, with an execution timeline of about one year. Compared to the company’s FY25 revenue of over ₹900 crore, these new orders amount to roughly 32% of last year’s revenue. Execution and revenue recognition are expected to begin in the December 2025 quarter and continue through FY27, based on typical hardware delivery, testing, and acceptance cycles. The company’s Q2 FY26 update showed softer year-on-year revenue but resilient margins; these orders add visibility for the next few quarters. About the company: Defence simulation and counter-drone systems maker; generally small–mid cap.
-Subscribe for more company news daily.
+Tata Consultancy Services Limited as on 15 November 2025
+Educational content only. Not investment advice or recommendation
 
-— pause —
+The news in focus is the launch of a new digital education platform by Tata Consultancy Services. On 14 November 2025, TCS announced “Team SDG Universe”, a free, interactive, story-based online platform designed to help children understand the United Nations’ 17 Sustainable Development Goals. Built by TCS iON, the platform uses games, short videos, comics and pledges so that students aged eight and above can learn about topics like climate change, equality and responsible consumption in a simple, engaging way. The launch date communicated was 14 November 2025, coinciding with Children’s Day in India. Because this is a digital platform that is already accessible online, usage numbers and any related revenue or impact are likely to start appearing quickly. A reasonable expectation is that measurable traction and any financial contribution from this initiative will begin to be visible from the fourth quarter of FY 2025-26, as more schools and children sign up and use the service.
 
-Skipper Ltd as on November 12, 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. 
-On November 7, 2025, Skipper reported its highest-ever closing order book at ₹8,820 crore as of September 30, 2025, with second-quarter inflows of ₹1,243 crore, including 765 kV transmission line wins in Rajasthan and Madhya Pradesh. Revenue recognition should spread across the December 2025 and March 2026 quarters and continue into FY27. About the company: Manufacturer of power transmission structures and EPC contractor; small cap.
-Subscribe for more company news daily.
+About the company: Tata Consultancy Services Limited is a global IT services and consulting company headquartered in India. <<Tata Consultancy Services Limited is a large cap company.>
 
-— pause —
-
-Saregama India Ltd as on November 12, 2025
-Disclaimer: Educational content only. Not investment advice or recommendation. 
-On November 5, 2025, Saregama disclosed that its material subsidiary Pocket Aces Pictures Pvt Ltd entered an agreement on September 25, 2025 to acquire 100% of Finnet Media Pvt Ltd, a digital entertainment company. A practical window for completion could be during the December 2025 or March 2026 quarters, subject to approvals and final documentation. About the company: Music label and content studio with growing digital portfolio; small–mid cap.
 Subscribe for more company news daily.
 
 
