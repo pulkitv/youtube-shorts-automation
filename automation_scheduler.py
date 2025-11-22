@@ -13,6 +13,7 @@ from pathlib import Path
 
 from youtube_uploader import YouTubeUploader
 from pdf_api_client import PDFAPIClient, RegularVoiceoverAPIClient
+from make_webhook_client import MakeWebhookClient
 
 class YouTubeShortsAutomation:
     """Main automation class that coordinates API calls, video downloads, and YouTube uploads"""
@@ -45,6 +46,9 @@ class YouTubeShortsAutomation:
             base_url=self.config['api']['base_url']
         )
         
+        # Initialize Make.com webhook client
+        self.webhook_client = MakeWebhookClient()
+        
         # Upload queue management
         self.upload_queue_file = self.config['files']['upload_queue_file']
         self.upload_queue = self.load_upload_queue()
@@ -71,6 +75,23 @@ class YouTubeShortsAutomation:
         self.logger.info("Enhanced automation with iteration tracking initialized")
         
         self.logger.info("YouTube Shorts & Posts Automation initialized successfully")
+    
+    def normalize_like_api(self, title: str) -> str:
+        """
+        Normalize title the same way the API does - remove punctuation and convert to lowercase
+        This ensures duplicate detection matches the API's normalization logic
+        
+        Args:
+            title: The title to normalize
+            
+        Returns:
+            Normalized title (lowercase, no punctuation)
+        """
+        import string
+        # Remove all punctuation
+        normalized = title.translate(str.maketrans('', '', string.punctuation))
+        # Convert to lowercase and strip whitespace
+        return normalized.lower().strip()
     
     def setup_logging(self):
         """Configure logging"""
@@ -142,6 +163,47 @@ class YouTubeShortsAutomation:
         """Add videos to the upload queue with scheduled publication times"""
         timestamp = datetime.now()
         
+        # LAYER 1: Remove old pending videos from previous runs
+        current_time = datetime.now()
+        original_queue_size = len(self.upload_queue)
+        
+        # Keep only videos that are:
+        # 1. Already uploaded/scheduled (status != 'pending'), OR
+        # 2. Pending but scheduled for future times
+        cleaned_queue = []
+        for v in self.upload_queue:
+            if v['status'] != 'pending':
+                # Keep all non-pending videos (already uploaded/scheduled/failed)
+                cleaned_queue.append(v)
+            else:
+                # For pending videos, check if scheduled for future
+                scheduled_time = v.get('scheduled_publish_time')
+                
+                # Convert string to datetime if needed
+                if isinstance(scheduled_time, str):
+                    try:
+                        scheduled_time = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+                    except:
+                        # If conversion fails, skip this video
+                        self.logger.warning(f"Skipping video with invalid schedule time: {v.get('title', 'Unknown')}")
+                        continue
+                
+                # Only keep if scheduled for future
+                if scheduled_time and scheduled_time > current_time:
+                    cleaned_queue.append(v)
+                else:
+                    self.logger.info(f"Removing old pending video: {v.get('title', 'Unknown')} (scheduled for {scheduled_time})")
+        
+        self.upload_queue = cleaned_queue
+        removed_count = original_queue_size - len(self.upload_queue)
+        
+        if removed_count > 0:
+            self.logger.info(f"🧹 Cleaned up {removed_count} old pending video(s) from queue")
+            self.save_upload_queue()
+        
+        # Get existing video titles to avoid duplicates
+        existing_titles = {self.normalize_like_api(v['title']) for v in self.upload_queue}
+        
         # Calculate next available publication slots
         if custom_start_time:
             # Use the custom start time provided by user
@@ -159,14 +221,14 @@ class YouTubeShortsAutomation:
             filename = os.path.basename(video_path)
             title = os.path.splitext(filename)[0]  # Remove .mp4 extension
             
-            # Remove 'api' prefix if present
-            if title.lower().startswith('api_'):
-                title = title[4:]  # Remove 'api_' prefix
-            elif title.lower().startswith('api '):
-                title = title[4:]  # Remove 'api ' prefix
-            
             # Replace underscores with spaces for better readability
             title = title.replace('_', ' ')
+            
+            # Skip if this video is already in the queue (duplicate detection using API normalization)
+            normalized_title = self.normalize_like_api(title)
+            if normalized_title in existing_titles:
+                self.logger.warning(f"⚠️ Skipping duplicate video: {title}")
+                continue
             
             # Calculate scheduled publication time
             scheduled_time = last_scheduled_time + timedelta(hours=interval_hours * (i + 1))
@@ -193,6 +255,7 @@ class YouTubeShortsAutomation:
                 'video_type': video_type  # Store video type
             }
             self.upload_queue.append(video_info)
+            existing_titles.add(normalized_title)  # Track normalized title within this batch
             
             video_type_label = "YouTube Short" if video_type == "short" else "YouTube Post"
             self.logger.info(f"Scheduled '{title}' as {video_type_label} for {scheduled_time.strftime('%Y-%m-%d %H:%M')} ({scheduled_time.strftime('%I:%M %p')} IST)")
@@ -222,7 +285,289 @@ class YouTubeShortsAutomation:
         else:
             # If no future videos scheduled, start from current time
             return current_time
-    
+    def extract_video_content_from_script(self, video_title: str) -> str:
+        """
+        Extract individual video content from MARKET_SCRIPT based on video title
+        Uses the same normalization logic as API server via normalize_like_api()
+        
+        Args:
+            video_title: The title of the video (cleaned filename)
+            
+        Returns:
+            The content for this specific video (from title to next pause marker)
+        """
+        try:
+            # Import the MARKET_SCRIPT from market_scripts.py
+            from market_scripts import MARKET_SCRIPT
+            
+            # Normalize the video title using existing normalize_like_api method
+            normalized_title = self.normalize_like_api(video_title)
+            
+            self.logger.debug(f"Searching for normalized title: '{normalized_title[:50]}...'")
+            
+            # Split MARKET_SCRIPT by pause markers to get individual segments
+            segments = MARKET_SCRIPT.split('— pause —')
+            
+            # Find the matching segment
+            for segment in segments:
+                segment = segment.strip()
+                if not segment:
+                    continue
+                
+                # Normalize this segment to compare with title
+                normalized_segment = self.normalize_like_api(segment)
+                
+                # Check if this segment matches the title
+                # Try exact match first
+                if normalized_title in normalized_segment or normalized_segment.startswith(normalized_title[:50]):
+                    self.logger.info(f"✅ Found matching segment for '{video_title[:40]}...'")
+                    
+                    # Clean up the content - remove extra newlines and spaces
+                    video_content = ' '.join(segment.split())
+                    
+                    self.logger.info(f"✅ Extracted {len(video_content)} characters")
+                    return video_content
+                
+                # Try with first 5 words
+                first_5_words = ' '.join(normalized_title.split()[:5])
+                if first_5_words and first_5_words in normalized_segment:
+                    self.logger.debug(f"Found match using first 5 words: '{first_5_words}'")
+                    video_content = ' '.join(segment.split())
+                    self.logger.info(f"✅ Extracted {len(video_content)} characters")
+                    return video_content
+                
+                # Try with first 3 words
+                first_3_words = ' '.join(normalized_title.split()[:3])
+                if first_3_words and first_3_words in normalized_segment:
+                    self.logger.debug(f"Found match using first 3 words: '{first_3_words}'")
+                    video_content = ' '.join(segment.split())
+                    self.logger.info(f"✅ Extracted {len(video_content)} characters")
+                    return video_content
+            
+            # If no match found
+            self.logger.warning(f"Could not find title '{video_title}' in MARKET_SCRIPT, using title as content")
+            return video_title
+            
+        except ImportError:
+            self.logger.error("Could not import MARKET_SCRIPT from market_scripts.py")
+            return video_title
+        except Exception as e:
+            self.logger.error(f"Error extracting video content: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return video_title  # Fallback to title
+        
+        
+    # def extract_video_content_from_script(self, video_title: str) -> str:
+    #     """
+    #     Extract individual video content from MARKET_SCRIPT based on video title
+    #     Uses the same normalization logic as API server via normalize_like_api()
+        
+    #     Args:
+    #         video_title: The title of the video (cleaned filename)
+            
+    #     Returns:
+    #         The content for this specific video (from title to next pause marker)
+    #     """
+    #     try:
+    #         # Import the MARKET_SCRIPT from market_scripts.py
+    #         from market_scripts import MARKET_SCRIPT
+            
+    #         # Normalize the video title using existing normalize_like_api method
+    #         normalized_title = self.normalize_like_api(video_title)
+            
+    #         # Normalize the entire MARKET_SCRIPT using the same method
+    #         normalized_script = self.normalize_like_api(MARKET_SCRIPT)
+            
+    #         self.logger.debug(f"Searching for normalized title: '{normalized_title[:50]}...'")
+            
+    #         # Find the title in the normalized script
+    #         title_index = normalized_script.find(normalized_title)
+            
+    #         if title_index == -1:
+    #             # If exact match not found, try with first few words
+    #             first_words = ' '.join(normalized_title.split()[:5])  # First 5 words
+    #             title_index = normalized_script.find(first_words)
+    #             if title_index != -1:
+    #                 self.logger.debug(f"Found match using first 5 words: '{first_words}'")
+            
+    #         if title_index == -1:
+    #             # Try even shorter match - first 3 words
+    #             first_words = ' '.join(normalized_title.split()[:3])  # First 3 words
+    #             title_index = normalized_script.find(first_words)
+    #             if title_index != -1:
+    #                 self.logger.debug(f"Found match using first 3 words: '{first_words}'")
+            
+    #         if title_index == -1:
+    #             self.logger.warning(f"Could not find title '{video_title}' in MARKET_SCRIPT, using title as content")
+    #             return video_title
+            
+    #         # Map the position from normalized script back to original MARKET_SCRIPT
+    #         # Count characters in original script up to the match position
+    #         char_count = 0
+    #         original_index = 0
+            
+    #         for i, char in enumerate(MARKET_SCRIPT):
+    #             # Normalize this character using the same method
+    #             normalized_char = self.normalize_like_api(char)
+    #             if normalized_char:  # Only count if it produces output after normalization
+    #                 char_count += len(normalized_char)
+                
+    #             if char_count >= title_index:
+    #                 original_index = i
+    #                 break
+            
+    #         # Find the start of the line containing this match in original MARKET_SCRIPT
+    #         line_start = MARKET_SCRIPT.rfind('\n', 0, original_index)
+    #         if line_start == -1:
+    #             line_start = 0
+    #         else:
+    #             line_start += 1  # Skip the newline character
+            
+    #         # Extract content from the original MARKET_SCRIPT (preserving case and formatting)
+    #         content_start = line_start
+            
+    #         # Find the next pause marker after the title
+    #         pause_marker = "— pause —"
+    #         next_pause_index = MARKET_SCRIPT.find(pause_marker, content_start)
+            
+    #         if next_pause_index != -1:
+    #             # Extract until the pause marker
+    #             video_content = MARKET_SCRIPT[content_start:next_pause_index].strip()
+    #         else:
+    #             # No pause marker found, extract until end of script
+    #             video_content = MARKET_SCRIPT[content_start:].strip()
+            
+    #         # Clean up the content - remove extra newlines and spaces
+    #         # Replace multiple newlines with single space
+    #         video_content = ' '.join(video_content.split())
+            
+    #         self.logger.info(f"✅ Extracted {len(video_content)} characters for '{video_title[:40]}...'")
+    #         return video_content
+            
+    #     except ImportError:
+    #         self.logger.error("Could not import MARKET_SCRIPT from market_scripts.py")
+    #         return video_title
+    #     except Exception as e:
+    #         self.logger.error(f"Error extracting video content: {e}")
+    #         import traceback
+    #         self.logger.error(traceback.format_exc())
+    #         return video_title  # Fallback to title
+
+    def upload_pending_videos(self):
+        """Upload pending videos and schedule them for publication"""
+        current_time = datetime.now()
+        max_retries = self.config['scheduling']['max_retries']
+        
+        # Get videos that are ready to be uploaded (not already uploaded/scheduled)
+        pending_videos = [v for v in self.upload_queue if v['status'] == 'pending']
+        
+        if not pending_videos:
+            self.logger.info("No pending videos to upload")
+            return
+        
+        # Reset tweet counter for new batch
+        self.webhook_client.reset_counter()
+        
+        # Upload all pending videos as private (they'll be scheduled for later publication)
+        for video_info in pending_videos:
+            try:
+                video_path = video_info['video_path']
+                
+                if not os.path.exists(video_path):
+                    self.logger.error(f"Video file not found: {video_path}")
+                    video_info['status'] = 'failed'
+                    video_info['error'] = 'File not found'
+                    continue
+                
+                scheduled_time = video_info.get('scheduled_publish_time')
+                if isinstance(scheduled_time, str):
+                    scheduled_time = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+                
+                # Get video type (default to 'short' for backward compatibility)
+                video_type = video_info.get('video_type', 'short')
+                video_type_label = "YouTube Short" if video_type == "short" else "YouTube Post"
+                
+                self.logger.info(f"Uploading {video_type_label} as private: {video_info['title']} (scheduled for {scheduled_time})")
+                
+                # Upload as private initially with video type
+                video_id = self.youtube_uploader.upload_video(
+                    video_path=video_path,
+                    title=video_info['title'],
+                    description=video_info['description'],
+                    tags=video_info['tags'],
+                    privacy_status="private",  # Upload as private
+                    video_type=video_type  # Pass video type to uploader
+                )
+                
+                if video_id:
+                    video_info['status'] = 'uploaded_private'
+                    video_info['video_id'] = video_id
+                    video_info['uploaded_at'] = datetime.now()
+                    
+                    # Construct YouTube Shorts URL
+                    video_url = f"https://youtube.com/shorts/{video_id}" if video_type == "short" else f"https://youtube.com/watch?v={video_id}"
+                    
+                    # Schedule for publication
+                    if scheduled_time and self.youtube_uploader.schedule_video(video_id, scheduled_time):
+                        video_info['status'] = 'scheduled'
+                        video_info['scheduled_at'] = datetime.now()
+                        self.logger.info(f"Successfully scheduled: {video_info['title']} (ID: {video_id}) for {scheduled_time}")
+                        self.logger.info("✅ YouTube will automatically publish this video at the scheduled time")
+                        
+                        # Send tweet data to Make.com webhook
+                        # Extract the specific video content from MARKET_SCRIPT
+                        full_content = self.extract_video_content_from_script(video_info['title'])
+                        
+                        self.webhook_client.send_tweet_data(
+                            full_content=full_content,
+                            video_url=video_url,
+                            scheduled_time=scheduled_time
+                        )
+                    else:
+                        # If scheduling fails, send webhook with empty video URL
+                        self.logger.error(f"Failed to schedule video: {video_info['title']}")
+                        video_info['status'] = 'schedule_failed'
+                        
+                        # Still send to webhook but with empty video URL
+                        full_content = self.extract_video_content_from_script(video_info['title'])
+                        
+                        self.webhook_client.send_tweet_data(
+                            full_content=full_content,
+                            video_url="",  # Empty for failed uploads
+                            scheduled_time=scheduled_time
+                        )
+                    
+                    # Move processed file
+                    self.move_processed_file(video_path)
+                    
+                else:
+                    video_info['upload_attempts'] += 1
+                    if video_info['upload_attempts'] >= max_retries:
+                        video_info['status'] = 'failed'
+                        video_info['error'] = 'Max retries exceeded'
+                        self.logger.error(f"Failed to upload after {max_retries} attempts: {video_info['title']}")
+                        
+                        # Send webhook with empty video URL for failed upload
+                        full_content = self.extract_video_content_from_script(video_info['title'])
+                        
+                        self.webhook_client.send_tweet_data(
+                            full_content=full_content,
+                            video_url="",  # Empty for failed uploads
+                            scheduled_time=scheduled_time
+                        )
+                    else:
+                        self.logger.warning(f"Upload attempt {video_info['upload_attempts']} failed, will retry: {video_info['title']}")
+                
+            except Exception as e:
+                self.logger.error(f"Error uploading video {video_info['title']}: {e}")
+                video_info['upload_attempts'] += 1
+                if video_info['upload_attempts'] >= max_retries:
+                    video_info['status'] = 'failed'
+                    video_info['error'] = str(e)
+        
+        self.save_upload_queue()
+
     def generate_videos_from_script(self, script: str, voice: str = "onyx", speed: float = 1.2) -> List[str]:
         """Generate videos from a script using the API"""
         self.logger.info("Starting video generation from script")
@@ -279,86 +624,6 @@ class YouTubeShortsAutomation:
         except Exception as e:
             self.logger.error(f"Failed to generate YouTube Posts: {e}")
             return []
-    
-    def upload_pending_videos(self):
-        """Upload pending videos and schedule them for publication"""
-        current_time = datetime.now()
-        max_retries = self.config['scheduling']['max_retries']
-        
-        # Get videos that are ready to be uploaded (not already uploaded/scheduled)
-        pending_videos = [v for v in self.upload_queue if v['status'] == 'pending']
-        
-        if not pending_videos:
-            self.logger.info("No pending videos to upload")
-            return
-        
-        # Upload all pending videos as private (they'll be scheduled for later publication)
-        for video_info in pending_videos:
-            try:
-                video_path = video_info['video_path']
-                
-                if not os.path.exists(video_path):
-                    self.logger.error(f"Video file not found: {video_path}")
-                    video_info['status'] = 'failed'
-                    video_info['error'] = 'File not found'
-                    continue
-                
-                scheduled_time = video_info.get('scheduled_publish_time')
-                if isinstance(scheduled_time, str):
-                    scheduled_time = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
-                
-                # Get video type (default to 'short' for backward compatibility)
-                video_type = video_info.get('video_type', 'short')
-                video_type_label = "YouTube Short" if video_type == "short" else "YouTube Post"
-                
-                self.logger.info(f"Uploading {video_type_label} as private: {video_info['title']} (scheduled for {scheduled_time})")
-                
-                # Upload as private initially with video type
-                video_id = self.youtube_uploader.upload_video(
-                    video_path=video_path,
-                    title=video_info['title'],
-                    description=video_info['description'],
-                    tags=video_info['tags'],
-                    privacy_status="private",  # Upload as private
-                    video_type=video_type  # Pass video type to uploader
-                )
-                
-                if video_id:
-                    video_info['status'] = 'uploaded_private'
-                    video_info['video_id'] = video_id
-                    video_info['uploaded_at'] = datetime.now()
-                    
-                    # Schedule for publication
-                    if scheduled_time and self.youtube_uploader.schedule_video(video_id, scheduled_time):
-                        video_info['status'] = 'scheduled'
-                        video_info['scheduled_at'] = datetime.now()
-                        self.logger.info(f"Successfully scheduled: {video_info['title']} (ID: {video_id}) for {scheduled_time}")
-                        self.logger.info("✅ YouTube will automatically publish this video at the scheduled time")
-                    else:
-                        # If scheduling fails, just mark as failed
-                        self.logger.error(f"Failed to schedule video: {video_info['title']}")
-                        video_info['status'] = 'schedule_failed'
-                    
-                    # Move processed file
-                    self.move_processed_file(video_path)
-                    
-                else:
-                    video_info['upload_attempts'] += 1
-                    if video_info['upload_attempts'] >= max_retries:
-                        video_info['status'] = 'failed'
-                        video_info['error'] = 'Max retries exceeded'
-                        self.logger.error(f"Failed to upload after {max_retries} attempts: {video_info['title']}")
-                    else:
-                        self.logger.warning(f"Upload attempt {video_info['upload_attempts']} failed, will retry: {video_info['title']}")
-                
-            except Exception as e:
-                self.logger.error(f"Error uploading video {video_info['title']}: {e}")
-                video_info['upload_attempts'] += 1
-                if video_info['upload_attempts'] >= max_retries:
-                    video_info['status'] = 'failed'
-                    video_info['error'] = str(e)
-        
-        self.save_upload_queue()
     
     def check_and_publish_scheduled_videos(self):
         """Check for videos that are ready to be published and make them public"""
