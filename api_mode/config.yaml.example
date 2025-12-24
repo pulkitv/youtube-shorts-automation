@@ -1,0 +1,63 @@
+# YouTube Shorts Automation API Configuration
+
+api:
+  host: "0.0.0.0"  # Listen on all interfaces
+  port: 8000
+  debug: false
+  
+  # API Keys for authentication
+  # Generate secure keys: python -c "import secrets; print(secrets.token_urlsafe(32))"
+  api_keys:
+    - "YOUR_API_KEY_HERE"
+    - "YOUR_API_KEY_HERE"
+
+limits:
+  # Rate limiting
+  max_requests_per_minute: 10
+  
+  # Concurrent job limit per API key
+  max_concurrent_jobs: 3
+  
+  # Maximum script length (characters)
+  max_script_length: 50000
+
+video_defaults:
+  voice: "onyx"  # Default TTS voice
+  speed: 1.2     # Default speech speed
+
+processing:
+  # How often to check for new jobs (seconds)
+  poll_interval_seconds: 10
+  
+  # Job timeout (minutes)
+  job_timeout_minutes: 60
+  
+  # Retry settings
+  max_retries: 3
+  retry_delay_seconds: 30
+
+database:
+  # SQLite database path (relative to api_mode/ directory)
+  path: "api_jobs.db"
+  
+  # Backup settings
+  backup_enabled: true
+  backup_interval_hours: 24
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "api_server.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+
+# Integration with existing automation
+automation:
+  # Path to parent directory (automatically detected)
+  # This is where upload_queue.json and downloads/ are located
+  
+  # Upload scheduling
+  schedule_interval_hours: 2.5  # Time between video uploads
+  
+  # Video processing
+  download_folder: "../downloads"
+  upload_queue_file: "../upload_queue.json"

@@ -335,16 +335,17 @@ class PDFAPIClient:
             self.logger.error(f"Error finding download URL: {e}")
             return None
     
-    def _wait_for_completion(self, session_id: str, poll_interval: int = 5) -> Optional[Dict]:
+    def _wait_for_completion(self, session_id: str, status_url: Optional[str] = None, poll_interval: int = 5) -> Optional[Dict]:
         """
         Poll the API until video generation is complete or timeout
         
         Args:
             session_id: Session ID to check
+            status_url: Optional status URL (not used for PDFAPIClient, kept for compatibility)
             poll_interval: Seconds between status checks (default: 5)
             
         Returns:
-            Final status dict or None if failed/timeout
+            Final status dict with download_url or None if failed/timeout
         """
         start_time = time.time()
         
@@ -358,7 +359,7 @@ class PDFAPIClient:
                 self.logger.error(f"Timeout waiting for completion after {self.max_wait_time} seconds")
                 return None
             
-            # Check status
+            # Check status - PDFAPIClient.check_status() only takes session_id
             status = self.check_status(session_id)
             
             if not status:
@@ -373,7 +374,56 @@ class PDFAPIClient:
             # Check if completed
             if status.get('status') == 'completed':
                 self.logger.info("Video generation completed successfully!")
-                return status
+                self.logger.info(f"Full status response keys: {list(status.keys())}")
+                
+                # Extract data from nested 'result' object if present
+                result_data = status.get('result', {})
+                if result_data:
+                    self.logger.info(f"Result data keys: {list(result_data.keys())}")
+                
+                # Get download URL - try multiple possible locations
+                download_url = (
+                    status.get('zip_url') or
+                    status.get('download_url') or 
+                    result_data.get('download_url') or
+                    result_data.get('zip_url') or
+                    result_data.get('file_url') or
+                    status.get('file_url')
+                )
+                
+                if not download_url:
+                    self.logger.info("No direct download_url in status, attempting to find it...")
+                    download_url = self._try_find_download_url(session_id)
+                
+                if not download_url:
+                    self.logger.error("No download_url in completion status")
+                    self.logger.error(f"Status keys: {list(status.keys())}")
+                    self.logger.error(f"Result keys: {list(result_data.keys())}")
+                    return None
+                
+                # Make URL absolute if it's relative
+                if download_url.startswith('/'):
+                    download_url = f"{self.base_url}{download_url}"
+                
+                # Build the final result dict with flattened data
+                final_result = {
+                    'status': 'completed',
+                    'zip_url': download_url,
+                    'download_url': download_url,  # Add both for compatibility
+                    'session_id': session_id
+                }
+                
+                # Copy other useful fields from result_data
+                if result_data:
+                    for key in ['duration', 'format', 'file_path', 'file_url', 'video_count']:
+                        if key in result_data:
+                            final_result[key] = result_data[key]
+                
+                self.logger.info(f"✅ Completion data extracted:")
+                self.logger.info(f"   Download URL: {download_url}")
+                self.logger.info(f"   Session ID: {session_id}")
+                
+                return final_result
             
             # Check if failed
             if status.get('status') == 'failed':
@@ -657,7 +707,7 @@ class RegularVoiceoverAPIClient:
             speed: Speech speed between 0.25 and 4.0
             
         Returns:
-            Response dict with download_url and status, None if failed
+            Response dict with session_id and status, None if failed
         """
         url = f"{self.base_url}{self.endpoint}"
         
@@ -688,13 +738,23 @@ class RegularVoiceoverAPIClient:
                 self.logger.error(f"Voiceover generation failed: {result.get('error', 'Unknown error')}")
                 return None
             
-            download_url = result.get('download_url')
-            if not download_url:
-                self.logger.error("No download_url in API response")
+            session_id = result.get('session_id')
+            status_url = result.get('status_url')
+            
+            if not session_id:
+                self.logger.error("No session_id in API response")
                 return None
             
-            self.logger.info(f"Voiceover generated successfully. Download URL: {download_url}")
-            return result
+            self.logger.info(f"Voiceover generation started. Session ID: {session_id}")
+            
+            # Wait for completion
+            completion_status = self._wait_for_completion(session_id, status_url)
+            
+            if not completion_status:
+                self.logger.error("Failed to complete video generation")
+                return None
+            
+            return completion_status
             
         except requests.exceptions.Timeout:
             self.logger.error(f"Request timeout after {self.request_timeout} seconds")
@@ -706,28 +766,208 @@ class RegularVoiceoverAPIClient:
             self.logger.error(f"Unexpected error: {e}")
             return None
     
-    def download_video(self, download_url: str, output_path: str) -> bool:
+    def check_status(self, session_id: str, status_url: Optional[str] = None) -> Optional[Dict]:
         """
-        Download a video file from the API
+        Check the status of a voiceover generation request
         
         Args:
-            download_url: URL to download the video from
-            output_path: Local path to save the video
+            session_id: Session ID from the generation request
+            status_url: Optional status URL (if not provided, will construct from session_id)
             
         Returns:
-            True if successful, False otherwise
+            Status dict with progress info, None if failed
+        """
+        if status_url:
+            url = status_url if status_url.startswith('http') else f"{self.base_url}{status_url}"
+        else:
+            url = f"{self.base_url}/api/v1/voiceover/status/{session_id}"
+        
+        try:
+            response = requests.get(url, timeout=self.status_timeout)
+            response.raise_for_status()
+            
+            return response.json()
+            
+        except requests.exceptions.Timeout:
+            self.logger.error(f"Status check timeout after {self.status_timeout} seconds")
+            return None
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Status check failed: {e}")
+            return None
+    
+    def _wait_for_completion(self, session_id: str, status_url: Optional[str] = None, poll_interval: int = 5) -> Optional[Dict]:
+        """
+        Poll the API until video generation is complete or timeout
+        
+        Args:
+            session_id: Session ID to check
+            status_url: Optional status URL
+            poll_interval: Seconds between status checks (default: 5)
+            
+        Returns:
+            Final status dict with download_url or None if failed/timeout
+        """
+        start_time = time.time()
+        
+        self.logger.info(f"Waiting for completion (max {self.max_wait_time}s)...")
+        
+        while True:
+            elapsed = time.time() - start_time
+            
+            # Check if we've exceeded max wait time
+            if elapsed > self.max_wait_time:
+                self.logger.error(f"Timeout waiting for completion after {self.max_wait_time} seconds")
+                return None
+            
+            # Check status
+            status = self.check_status(session_id, status_url)
+            
+            if not status:
+                self.logger.error("Failed to check status")
+                return None
+            
+            # Log progress
+            progress = status.get('progress', 0)
+            message = status.get('message', 'Processing...')
+            self.logger.info(f"Progress: {progress}% - {message} (elapsed: {int(elapsed)}s / {self.max_wait_time}s)")
+            
+            # Check if completed
+            if status.get('status') == 'completed':
+                self.logger.info("Video generation completed successfully!")
+                self.logger.info(f"Full status response keys: {list(status.keys())}")
+                
+                # Extract data from nested 'result' object if present
+                result_data = status.get('result', {})
+                if result_data:
+                    self.logger.info(f"Result data keys: {list(result_data.keys())}")
+                
+                # Get download URL - try multiple possible locations
+                download_url = (
+                    status.get('download_url') or 
+                    result_data.get('download_url') or
+                    result_data.get('file_url') or
+                    result_data.get('full_file_url') or
+                    status.get('file_url')
+                )
+                
+                if not download_url:
+                    self.logger.error("No download_url in completion status")
+                    self.logger.error(f"Status keys: {list(status.keys())}")
+                    self.logger.error(f"Result keys: {list(result_data.keys())}")
+                    return None
+                
+                # Make URL absolute if it's relative
+                if download_url.startswith('/'):
+                    download_url = f"{self.base_url}{download_url}"
+                
+                # Get filename - CHECK RESULT FIRST, then status
+                filename = (
+                    result_data.get('filename') or
+                    status.get('filename') or
+                    result_data.get('file_name') or
+                    status.get('file_name')
+                )
+                
+                self.logger.info(f"Extracted filename from result: {filename}")
+                
+                # If still no filename, try to extract from file_path
+                if not filename:
+                    file_path = result_data.get('file_path') or status.get('file_path')
+                    if file_path:
+                        filename = os.path.basename(file_path)
+                        self.logger.info(f"Extracted filename from file_path: {filename}")
+                
+                # Build the final result dict with flattened data
+                final_result = {
+                    'status': 'completed',
+                    'download_url': download_url,
+                    'filename': filename,
+                    'session_id': session_id
+                }
+                
+                # Copy other useful fields from result_data
+                if result_data:
+                    for key in ['duration', 'format', 'file_path', 'file_url']:
+                        if key in result_data:
+                            final_result[key] = result_data[key]
+                
+                self.logger.info(f"✅ Completion data extracted:")
+                self.logger.info(f"   Download URL: {download_url}")
+                self.logger.info(f"   Filename: {filename}")
+                self.logger.info(f"   File path: {final_result.get('file_path', 'N/A')}")
+                
+                return final_result
+            
+            # Check if failed
+            if status.get('status') == 'failed':
+                error = status.get('error', 'Unknown error')
+                self.logger.error(f"Video generation failed: {error}")
+                return None
+            
+            # Wait before next poll
+            time.sleep(poll_interval)
+    
+    def generate_and_download_video(self, 
+                                    script: str,
+                                    download_folder: str = "downloads",
+                                    voice: str = "onyx",
+                                    speed: float = 1.2) -> Optional[str]:
+        """
+        Generate and download a regular format video
+        
+        Args:
+            script: Text script for the voiceover
+            download_folder: Folder to save downloaded videos
+            voice: Voice type
+            speed: Speech speed
+            
+        Returns:
+            Path to downloaded video file, None if failed
         """
         try:
-            self.logger.info(f"Downloading video from: {download_url}")
+            self.logger.info("Starting regular video generation and download")
+            
+            # Step 1: Generate voiceover and wait for completion
+            result = self.generate_voiceover(script, voice, speed)
+            
+            if not result:
+                self.logger.error("Failed to generate voiceover")
+                return None
+            
+            # Step 2: Get download URL
+            download_url = result.get('download_url')
+            
+            if not download_url:
+                self.logger.error("No download URL in response")
+                self.logger.error(f"Response keys: {list(result.keys())}")
+                return None
+            
+            # Step 3: Get the original filename from API response
+            filename = result.get('filename')
+            
+            if not filename:
+                # Fallback: extract from download URL or file_url
+                file_url = result.get('file_url', '')
+                if file_url:
+                    # Extract filename from URL like /download-voiceover/voiceover_api_voiceover_xxx.mp4
+                    filename = file_url.split('/')[-1]
+                    self.logger.info(f"Extracted filename from file_url: {filename}")
+                else:
+                    # Last resort fallback
+                    filename = f'voiceover_{datetime.now().strftime("%Y%m%d_%H%M%S")}.mp4'
+                    self.logger.warning(f"No filename in API response, using fallback: {filename}")
+            
+            output_path = os.path.join(download_folder, filename)
             
             # Ensure download directory exists
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            os.makedirs(download_folder, exist_ok=True)
             
-            response = requests.get(
-                download_url, 
-                stream=True,
-                timeout=(30, self.download_timeout)
-            )
+            # Step 4: Download the video
+            self.logger.info(f"Downloading video from: {download_url}")
+            self.logger.info(f"Saving to: {output_path}")
+            self.logger.info(f"Original filename: {filename}")
+            
+            response = requests.get(download_url, timeout=300, stream=True)
             response.raise_for_status()
             
             # Download with progress tracking
@@ -740,69 +980,31 @@ class RegularVoiceoverAPIClient:
                         f.write(chunk)
                         downloaded += len(chunk)
                         
-                        # Log progress for large files
+                        # Log progress every 20%
                         if total_size > 0:
                             progress = (downloaded / total_size) * 100
-                            if int(progress) % 10 == 0:
+                            if downloaded == len(chunk) or int(progress) % 20 == 0:
                                 self.logger.info(f"Download progress: {progress:.1f}%")
             
-            self.logger.info(f"Video downloaded successfully to: {output_path}")
-            return True
+            # Verify file exists and has content
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                file_size_mb = os.path.getsize(output_path) / (1024*1024)
+                self.logger.info(f"✅ Video downloaded successfully: {output_path}")
+                self.logger.info(f"   Original filename preserved: {filename}")
+                self.logger.info(f"   File size: {file_size_mb:.2f} MB")
+                return output_path
+            else:
+                self.logger.error("Downloaded file is empty or doesn't exist")
+                return None
             
         except requests.exceptions.Timeout:
-            self.logger.error(f"Download timeout after {self.download_timeout} seconds")
-            return False
+            self.logger.error("Download timeout")
+            return None
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Download failed: {e}")
-            return False
+            return None
         except Exception as e:
-            self.logger.error(f"Unexpected error during download: {e}")
-            return False
-    
-    def generate_and_download_video(self,
-                                   script: str,
-                                   download_folder: str,
-                                   voice: str = "onyx",
-                                   speed: float = 1.2) -> Optional[str]:
-        """
-        Complete workflow: generate voiceover video and download it
-        
-        Args:
-            script: Text script for the voiceover
-            download_folder: Folder to download the video
-            voice: Voice type
-            speed: Speech speed
-            
-        Returns:
-            Path to downloaded video file, None if failed
-        """
-        # Generate voiceover
-        result = self.generate_voiceover(script, voice, speed)
-        if not result:
-            return None
-        
-        download_url = result.get('download_url')
-        if not download_url:
-            self.logger.error("No download URL in response")
-            return None
-        
-        # Construct the full download URL if it's a relative path
-        if download_url.startswith('/'):
-            download_url = f"{self.base_url}{download_url}"
-        
-        # Generate filename from script
-        timestamp = int(time.time())
-        # Use first few words of script for filename
-        script_words = script.split()[:5]
-        filename_base = "_".join(script_words).lower()
-        # Clean filename
-        filename_base = "".join(c if c.isalnum() or c == '_' else '_' for c in filename_base)
-        filename = f"api_{filename_base}_{timestamp}.mp4"
-        
-        output_path = os.path.join(download_folder, filename)
-        
-        # Download the video
-        if self.download_video(download_url, output_path):
-            return output_path
-        else:
+            self.logger.error(f"Unexpected error during video download: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return None
