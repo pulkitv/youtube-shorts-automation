@@ -55,6 +55,11 @@ class MakeWebhookClient:
         Returns:
             True if successful, False otherwise
         """
+        # Debug: Log the length and preview of full_content
+        self.logger.info(f"📝 Full content length: {len(full_content)} characters")
+        self.logger.debug(f"📝 Full content preview: {full_content[:200]}...")
+
+
         # Increment counter
         self.tweet_counter += 1
         tweet_id = str(self.tweet_counter).zfill(2)  # 01, 02, 03, etc.
@@ -78,6 +83,7 @@ class MakeWebhookClient:
         self.logger.info(f"Preparing to send tweet data:")
         self.logger.info(f"  Tweet_ID: {tweet_id}")
         self.logger.info(f"  Tweet_Text: {tweet_text[:50]}...")
+        self.logger.info(f"  Full_Content length: {len(payload['Full_Content'])} chars")
         self.logger.info(f"  Video_ID: {video_url if video_url else '(empty - upload failed)'}")
         self.logger.info(f"  Tweet_date: {tweet_datetime}")
         

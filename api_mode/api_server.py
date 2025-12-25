@@ -613,8 +613,20 @@ class BackgroundJobProcessor:
             # Prepare video metadata
             video_metadata = {
                 'title': title[:100],  # YouTube title limit
-                'description': f"Generated via API (Job: {job['job_id']})\n\nScheduled publish: {scheduled_publish_time.strftime('%Y-%m-%d %H:%M:%S')}\nGenerated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                'tags': ['api', 'automation', 'market', 'news'],
+                'description': (
+                    "A different way of journaling. Bringing to you my favorite content in a concise, readable format. "
+                    "Have included a bit of research into my thoughts. Some real-world examples. "
+                    "You will find here some thought-provoking ideas and some very less known facts. "
+                    "And possibly some learnings that I undergo in my journey. "
+                    "Wrapped around some research and use of AI tools to present the content in a better format."
+                ),
+                'tags': [
+                    'BusinessStories', 'Marketing', 'CaseStudy', 'IndianBusiness', 
+                    'Entrepreneurship', 'Strategy', 'news', 'shorts', 'ai', 'automation', 
+                    'daily', 'market', 'stocks', 'finance', 'business', 'updates', 
+                    'summary', 'key insights', 'market signals', 'listed companies', 
+                    'investing', 'financial news'
+                ],
                 'category_id': '22',  # People & Blogs
             }
             
@@ -674,13 +686,17 @@ class BackgroundJobProcessor:
             
             video_url = f"https://www.youtube.com/watch?v={video_id}"
             
+            # ✅ FIX: Use the full script from job instead of title
+            full_script = job.get('market_script', title)
+
             logger.info(f"🐦 Sending to Make.com webhook for Twitter posting at {scheduled_publish_time.strftime('%Y-%m-%d %H:%M')}: {title}")
+            logger.info(f"📝 Full script length: {len(full_script)} characters")
             
             # Send to Make.com webhook with scheduled time
             response = self.make_webhook_client.send_tweet_data(
                 video_url=video_url,
                 scheduled_time=scheduled_publish_time,
-                full_content=title
+                full_content=full_script  # ✅ Pass full script instead of title
             )
             
             if response:
