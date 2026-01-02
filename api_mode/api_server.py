@@ -600,21 +600,67 @@ class BackgroundJobProcessor:
                 logger.error("YouTube uploader not initialized")
                 return False
             
+            # ✅ FIX 1: Check if file exists and log details
+            if not os.path.exists(video_path):
+                logger.error(f"❌ Video file does not exist: {video_path}")
+                return False
+            
+            file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+            logger.info(f"📂 Video file: {video_path}")
+            logger.info(f"📂 File size: {file_size_mb:.2f} MB")
+            
             filename = os.path.basename(video_path)
-            title = os.path.splitext(filename)[0].replace('_', ' ')
+            
+            # ✅ FIX 2: Extract title from script, not filename
+            # For shorts, try to match the video filename to the script segment
+            script = job.get('market_script', '')
+            
+            if job['video_type'] == 'short':
+                # Split script into segments
+                segments = script.split('— pause —')
+                
+                # Try to find the matching segment for this video
+                # The filename should contain part of the first line
+                title = None
+                for segment in segments:
+                    lines = segment.strip().split('\n')
+                    if lines:
+                        first_line = lines[0].strip()
+                        # Check if filename contains part of first line
+                        filename_clean = filename.replace('_', ' ').replace('.mp4', '').lower()
+                        first_line_clean = first_line.lower()[:50]  # First 50 chars
+                        
+                        if any(word in filename_clean for word in first_line_clean.split()[:5]):
+                            title = first_line
+                            break
+                
+                # Fallback to filename if no match
+                if not title:
+                    title = os.path.splitext(filename)[0].replace('_', ' ').strip()
+                    logger.warning(f"Could not match video to script segment, using filename: {title}")
+            else:
+                # For regular videos, use first line of script
+                lines = script.split('\n')
+                title = lines[0].strip() if lines else os.path.splitext(filename)[0].replace('_', ' ')
+            
+            # Ensure title is within YouTube limits
+            title = title[:100]
+            
+            logger.info(f"📝 Extracted title: {title}")
+            logger.info(f"📝 Title length: {len(title)} characters")
             
             # Check if scheduled time is in the future
             now = datetime.now()
             is_future = scheduled_publish_time > now
             
-            # Determine privacy status based on scheduled time
+            # Determine privacy status
             privacy_status = 'private' if is_future else 'public'
             
             # Prepare video metadata
             video_metadata = {
-                'title': title[:100],  # YouTube title limit
+                'title': title,
                 'description': (
-                    "A different way of journaling. Bringing to you my favorite content in a concise, readable format. "
+                    "Bringing to you my favorite content in a concise, readable format. "
                     "Have included a bit of research into my thoughts. Some real-world examples. "
                     "You will find here some thought-provoking ideas and some very less known facts. "
                     "And possibly some learnings that I undergo in my journey. "
@@ -627,55 +673,84 @@ class BackgroundJobProcessor:
                     'summary', 'key insights', 'market signals', 'listed companies', 
                     'investing', 'financial news'
                 ],
-                'category_id': '22',  # People & Blogs
+                'category_id': '22',
             }
             
             logger.info(f"📤 Uploading to YouTube: {title}")
             logger.info(f"   Privacy: {privacy_status}")
+            logger.info(f"   Video type: {job['video_type']}")
+            logger.info(f"   Scheduled publish: {scheduled_publish_time.strftime('%Y-%m-%d %H:%M:%S')}")
             
-            # Step 1: Upload the video
-            video_id = self.youtube_uploader.upload_video(
-                video_path=video_path,
-                title=video_metadata['title'],
-                description=video_metadata['description'],
-                tags=video_metadata['tags'],
-                category_id=video_metadata['category_id'],
-                privacy_status=privacy_status,
-                video_type=job['video_type']  # 'short' or 'post'
-            )
-            
-            if not video_id:
-                logger.error(f"Failed to upload video: {filename}")
+            # ✅ FIX 3: Add proper exception handling around upload
+            try:
+                # Step 1: Upload the video
+                # Note: video_type should be 'short' for shorts, or omitted/None for regular videos
+                upload_kwargs = {
+                    'video_path': video_path,
+                    'title': video_metadata['title'],
+                    'description': video_metadata['description'],
+                    'tags': video_metadata['tags'],
+                    'category_id': video_metadata['category_id'],
+                    'privacy_status': privacy_status
+                }
+                
+                # Only add video_type for shorts
+                if job['video_type'] == 'short':
+                    upload_kwargs['video_type'] = 'short'
+                
+                logger.info(f"Calling upload_video with kwargs: {list(upload_kwargs.keys())}")
+                
+                video_id = self.youtube_uploader.upload_video(**upload_kwargs)
+                
+                if not video_id:
+                    logger.error(f"❌ Upload returned None/False")
+                    logger.error(f"   Check youtube_uploader logs for detailed error")
+                    return False
+                
+                logger.info(f"✅ Video uploaded successfully. Video ID: {video_id}")
+                logger.info(f"🔗 Video URL: https://www.youtube.com/watch?v={video_id}")
+                
+            except Exception as upload_error:
+                logger.error(f"❌ Exception during upload: {upload_error}", exc_info=True)
+                logger.error(f"   Video path: {video_path}")
+                logger.error(f"   Title: {title}")
+                logger.error(f"   Privacy: {privacy_status}")
                 return False
-            
-            logger.info(f"✅ Video uploaded successfully. Video ID: {video_id}")
-            logger.info(f"🔗 Video URL: https://www.youtube.com/watch?v={video_id}")
             
             # Step 2: Schedule the video if it's for future publishing
             if is_future:
                 logger.info(f"🕒 Scheduling video for: {scheduled_publish_time.strftime('%Y-%m-%d %H:%M:%S')}")
                 
-                schedule_success = self.youtube_uploader.schedule_video(
-                    video_id=video_id,
-                    publish_time=scheduled_publish_time
-                )
-                
-                if schedule_success:
-                    logger.info(f"⏰ Video scheduled successfully for: {scheduled_publish_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                else:
-                    logger.warning(f"⚠️  Failed to schedule video, but video is uploaded as private")
+                try:
+                    schedule_success = self.youtube_uploader.schedule_video(
+                        video_id=video_id,
+                        publish_time=scheduled_publish_time
+                    )
+                    
+                    if schedule_success:
+                        logger.info(f"⏰ Video scheduled successfully for: {scheduled_publish_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                    else:
+                        logger.warning(f"⚠️  Failed to schedule video, but video is uploaded as private")
+                except Exception as schedule_error:
+                    logger.error(f"❌ Exception during scheduling: {schedule_error}", exc_info=True)
+                    logger.warning(f"⚠️  Video uploaded but scheduling failed")
             else:
                 logger.info(f"✅ Video published immediately (scheduled time has passed)")
             
             # Step 3: Send to Make.com webhook with scheduled time for Twitter posting
             if self.make_webhook_client:
-                self._post_to_twitter(video_id, title, job, scheduled_publish_time)
+                try:
+                    self._post_to_twitter(video_id, title, job, scheduled_publish_time)
+                except Exception as webhook_error:
+                    logger.error(f"❌ Exception sending to webhook: {webhook_error}", exc_info=True)
+                    logger.warning(f"⚠️  Video uploaded but webhook failed")
             
             return True
             
         except Exception as e:
-            logger.error(f"Failed to upload video: {e}", exc_info=True)
+            logger.error(f"❌ Failed to upload video (outer exception): {e}", exc_info=True)
             return False
+    
 
     def _post_to_twitter(self, video_id: str, title: str, job: Dict, scheduled_publish_time: datetime):
         """Send video info to Make.com webhook with scheduled time for Twitter posting"""

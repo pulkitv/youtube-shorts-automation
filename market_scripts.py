@@ -4,23 +4,16 @@ Script file for long market analysis content
 """
 
 MARKET_SCRIPT = """
-Why a tiny bottle of purple liquid destroyed a British monopoly.
+Did you know that an investment of just ₹1,000 in silver back in 2000 would have grown to a staggering ₹26,455 by 2025? That's a 2,600% return, showcasing silver's potential as a long-term wealth creator in India.
 
-For decades, if you wanted your white shirt to look bright, you used "Robin Blue." It was a blue powder sold by a massive British company. But it had a problem. You had to mix the powder in water, and if you didn't mix it perfectly, it left ugly blue patches on your shirt.
+In 2023, the silver market in India is experiencing unprecedented dynamics, with prices soaring to an average of ₹78,600 per kilogram, a significant leap from ₹55,100 in 2022. This surge is driven by a blend of investment demand and industrial applications, particularly in solar energy and electronics. As the global market faces a structural supply deficit, with demand outstripping supply by 182 million ounces, silver's role as a hedge against economic uncertainties becomes even more critical.
 
-Then came a man named M.P. Ramachandran. He invented Ujala. Unlike Robin Blue, Ujala wasn't a powder; it was a liquid. It dissolved instantly in water with zero effort and left no patches. He went door-to-door in Kerala showing housewives how much easier it was. He didn't just sell a whitener; he sold "convenience." The giant British company was too slow to adapt from powder to liquid. Ujala conquered the entire Indian market simply by realizing that the customer didn't hate the product; they hated the mixing process.
+The demand for silver in India is multifaceted. Investors see it as a safe-haven asset amid economic volatility, while industries leverage its properties for technological advancements. Despite a decline in silver jewelry demand, the market is projected to grow significantly by 2032, driven by sustainable sourcing and technological innovations.
+
+As silver continues to shine in the investment landscape, how will you leverage its potential in your portfolio? Consider the opportunities and challenges, and share your thoughts on the future of silver investment in India.
 
 Like and Subscribe so I can build more such interesting videos.
-
-— pause —
-
-How World War I accidentally created India's most famous soap.
-
-In 1916, the world was at war. The Kingdom of Mysore faced a strange crisis. They had tons of sandalwood logs that they usually exported to Europe for perfume, but because of the war, ships stopped sailing. The wood was piling up and rotting. The King, Krishnaraja Wadiyar IV, had to do something to save his revenue.
-
-He decided to extract the oil from the wood and turn it into soap. He didn't just make a cleaning product; he created "Mysore Sandal Soap," the only soap in the world made from 100% pure sandalwood oil. What started as a desperate attempt to use up excess inventory during a trade blockade became a luxury heritage brand. It proves that sometimes, your biggest business disaster can force you to create your most valuable product.
-
-Like and Subscribe so I can build more such interesting videos."""
+"""
 if __name__ == "__main__":
     print(f"Market Script Length: {len(MARKET_SCRIPT)} characters")
     print(f"Expected Videos: {MARKET_SCRIPT.count('— pause —') + 1}")
